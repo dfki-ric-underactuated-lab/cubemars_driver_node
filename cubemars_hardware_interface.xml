@@ -1,0 +1,9 @@
+<library path="cubemars_hardware_interface">
+  <class name="cubemars_hardware_interface/CubemarsHardwareInterface"
+         type="cubemars_hardware_interface::CubemarsHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware interface for Cubemars motors using Can. 
+    </description>
+  </class>
+</library>
