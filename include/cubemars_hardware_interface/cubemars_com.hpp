@@ -106,8 +106,8 @@ namespace cubemars
     {
         uint32_t can_id = 0;
         std::string name = "";
-        double Kp = std::numeric_limits<double>::quiet_NaN();
-        double Kd = std::numeric_limits<double>::quiet_NaN();
+        double kp = std::numeric_limits<double>::quiet_NaN();
+        double kd = std::numeric_limits<double>::quiet_NaN();
         double P_MIN = std::numeric_limits<double>::quiet_NaN();
         double P_MAX = std::numeric_limits<double>::quiet_NaN();
         double V_MIN = std::numeric_limits<double>::quiet_NaN();
@@ -116,10 +116,10 @@ namespace cubemars
         double I_MAX = std::numeric_limits<double>::quiet_NaN();
         double T_MIN = std::numeric_limits<double>::quiet_NaN();
         double T_MAX = std::numeric_limits<double>::quiet_NaN();
-        double Kp_MIN = std::numeric_limits<double>::quiet_NaN();
-        double Kp_MAX = std::numeric_limits<double>::quiet_NaN();
-        double Kd_MIN = std::numeric_limits<double>::quiet_NaN();
-        double Kd_MAX = std::numeric_limits<double>::quiet_NaN();
+        double kp_MIN = std::numeric_limits<double>::quiet_NaN();
+        double kp_MAX = std::numeric_limits<double>::quiet_NaN();
+        double kd_MIN = std::numeric_limits<double>::quiet_NaN();
+        double kd_MAX = std::numeric_limits<double>::quiet_NaN();
     };
 
     static const std::array<uint8_t, 8> START_MOTOR_CONTROL_MODE = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
