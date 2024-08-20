@@ -104,7 +104,7 @@ namespace cubemars
 
     struct joint_config_t
     {
-        uint32_t can_id = 0;
+        canid_t can_id = 0;
         std::string name = "";
         double kp = std::numeric_limits<double>::quiet_NaN();
         double kd = std::numeric_limits<double>::quiet_NaN();
@@ -114,8 +114,6 @@ namespace cubemars
         double V_MAX = std::numeric_limits<double>::quiet_NaN();
         double I_MIN = std::numeric_limits<double>::quiet_NaN();
         double I_MAX = std::numeric_limits<double>::quiet_NaN();
-        double T_MIN = std::numeric_limits<double>::quiet_NaN();
-        double T_MAX = std::numeric_limits<double>::quiet_NaN();
         double kp_MIN = std::numeric_limits<double>::quiet_NaN();
         double kp_MAX = std::numeric_limits<double>::quiet_NaN();
         double kd_MIN = std::numeric_limits<double>::quiet_NaN();

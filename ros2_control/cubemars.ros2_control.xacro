@@ -30,73 +30,148 @@
   </xacro:macro>
 
   <xacro:macro name="AK10-9" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-50.0" vel_max="50.0" effort_min="-65.0" effort_max="65.0" /> 
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-50.0" 
+      vel_max="50.0" 
+      effort_min="-65.0" 
+      effort_max="65.0" 
+    /> 
   </xacro:macro>
 
   <xacro:macro name="AK60-6" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-45.0" vel_max="45.0" effort_min="-15.0" effort_max="15.0" /> 
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-45.0" 
+      vel_max="45.0" 
+      effort_min="-15.0" 
+      effort_max="15.0" 
+    /> 
   </xacro:macro>
 
   <xacro:macro name="AK70-10" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-50.0" vel_max="50.0" effort_min="-25.0" effort_max="25.0" />
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-50.0" 
+      vel_max="50.0" 
+      effort_min="-25.0" 
+      effort_max="25.0" 
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-5" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-76.0" vel_max="76.0" effort_min="-12.0" effort_max="12.0" />
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-76.0" 
+      vel_max="76.0" 
+      effort_min="-12.0" 
+      effort_max="12.0" 
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-6" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" 
-                       prefix="${prefix}" 
-                       can_id="${can_id}" 
-                       kp="${kp}" 
-                       kd="${kd}" 
-                       pos_min="-95.5" 
-                       pos_max="95.5"
-                       vel_min="-45.0" 
-                       vel_max="45.0" 
-                       effort_min="-18.0" 
-                       effort_max="18.0" />
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      pos_min="-95.5" 
+      pos_max="95.5"
+      vel_min="-45.0" 
+      vel_max="45.0" 
+      effort_min="-18.0" 
+      effort_max="18.0" 
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-6_V2" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" 
-                       prefix="${prefix}" 
-                       can_id="${can_id}" 
-                       kp="${kp}" 
-                       kd="${kd}" 
-                       pos_min="-12.5" 
-                       pos_max="12.5"
-                       vel_min="-76.0" 
-                       vel_max="76.0" 
-                       effort_min="-12.0" 
-                       effort_max="12.0" />
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      pos_min="-12.5" 
+      pos_max="12.5"
+      vel_min="-76.0" 
+      vel_max="76.0" 
+      effort_min="-12.0" 
+      effort_max="12.0" 
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-9" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-50.0" vel_max="50.0" effort_min="-18.0" effort_max="18.0"/>
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-50.0" 
+      vel_max="50.0" 
+      effort_min="-18.0" 
+      effort_max="18.0"
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-9_V2" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" 
-                       prefix="${prefix}" 
-                       can_id="${can_id}" 
-                       kp="${kp}" 
-                       kd="${kd}" 
-                       pos_min="-12.5" 
-                       pos_max="12.5"
-                       vel_min="-25.64" 
-                       vel_max="25.64" 
-                       effort_min="-18.0" 
-                       effort_max="18.0" />
+    <xacro:cubemars_ak 
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      pos_min="-12.5" 
+      pos_max="12.5"
+      vel_min="-25.64" 
+      vel_max="25.64" 
+      effort_min="-18.0" 
+      effort_max="18.0" 
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-64" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-8.0" vel_max="8.0" effort_min="-144.0" effort_max="144.0"/>
+    <xacro:cubemars_ak name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-8.0" 
+      vel_max="8.0" 
+      effort_min="-144.0" 
+      effort_max="144.0"
+    />
   </xacro:macro>
 
   <xacro:macro name="AK80-8" params="name prefix can_id kp kd">
-    <xacro:cubemars_ak name="${name}" prefix="${prefix}" can_id="${can_id}" kp="${kp}" kd="${kd}" vel_min="-37.5" vel_max="37.5" effort_min="-32.0" effort_max="32.0"/>
+    <xacro:cubemars_ak  
+      name="${name}" 
+      prefix="${prefix}" 
+      can_id="${can_id}" 
+      kp="${kp}" 
+      kd="${kd}" 
+      vel_min="-37.5" 
+      vel_max="37.5" 
+      effort_min="-32.0" 
+      effort_max="32.0"
+    />
   </xacro:macro>
 
 </robot>

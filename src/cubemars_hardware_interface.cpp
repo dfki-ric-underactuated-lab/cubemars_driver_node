@@ -2,16 +2,25 @@
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 
+namespace hw = hardware_interface;
+
 namespace cubemars_hardware_interface
 {
-    hardware_interface::CallbackReturn CubemarsHardwareInterface::on_init(
-        const hardware_interface::HardwareInfo &info)
+    // Ensure on_deactivate is called and joints are deactivated on SIGINT
+    // https://github.com/ros-controls/ros2_control/issues/472
+    CubemarsHardwareInterface::~CubemarsHardwareInterface()
+    {
+        on_deactivate(rclcpp_lifecycle::State());
+    }
+
+    hw::CallbackReturn CubemarsHardwareInterface::on_init(
+        const hw::HardwareInfo &info)
     {
         if (
-            hardware_interface::SystemInterface::on_init(info) !=
-            hardware_interface::CallbackReturn::SUCCESS)
+            hw::SystemInterface::on_init(info) !=
+            hw::CallbackReturn::SUCCESS)
         {
-            return hardware_interface::CallbackReturn::ERROR;
+            return hw::CallbackReturn::ERROR;
         }
         can_interface_ = info_.hardware_parameters["can_interface"];
 
@@ -37,17 +46,17 @@ namespace cubemars_hardware_interface
             conf.kp_MAX = stod(joint.parameters["kp_max"]);
             for (auto command_interface : joint.command_interfaces)
             {
-                if (command_interface.name == hardware_interface::HW_IF_POSITION)
+                if (command_interface.name == hw::HW_IF_POSITION)
                 {
                     conf.P_MIN = stod(command_interface.min);
                     conf.P_MAX = stod(command_interface.max);
                 }
-                else if (command_interface.name == hardware_interface::HW_IF_VELOCITY)
+                else if (command_interface.name == hw::HW_IF_VELOCITY)
                 {
                     conf.V_MIN = stod(command_interface.min);
                     conf.V_MAX = stod(command_interface.max);
                 }
-                else if (command_interface.name == hardware_interface::HW_IF_EFFORT)
+                else if (command_interface.name == hw::HW_IF_EFFORT)
                 {
                     conf.I_MIN = stod(command_interface.min);
                     conf.I_MAX = stod(command_interface.max);
@@ -56,26 +65,56 @@ namespace cubemars_hardware_interface
 
             hw_joint_configs_.push_back(conf);
             RCLCPP_INFO(
-                rclcpp::get_logger("CubemarsHardwareInterface"), "Using joint %s (id=%i)", conf.name.c_str(), conf.can_id);
+                rclcpp::get_logger("CubemarsHardwareInterface"), 
+                "Using joint %s (id=%i)", conf.name.c_str(), conf.can_id);
         }
 
-        hw_commands_position_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_commands_velocity_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_commands_effort_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_states_position_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_states_velocity_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_states_effort_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_states_temperature_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-        hw_control_level_.resize(info_.joints.size(), cubemars::JointMode::UNDEFINED);
-        return hardware_interface::CallbackReturn::SUCCESS;
+        // Create a sorted vector in descending order of indices to start 
+        // communication with joint with lowest priority (highest CAN id).
+        sorted_idx_.resize(hw_joint_configs_.size());
+        iota(sorted_idx_.begin(), sorted_idx_.end(), 0);
+
+        std::sort(sorted_idx_.begin(), sorted_idx_.end(),
+                  [&](size_t i1, size_t i2)
+                  {
+                      return hw_joint_configs_[i1].can_id > hw_joint_configs_[i2].can_id;
+                  });
+
+        hw_commands_position_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_commands_velocity_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_commands_effort_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_states_position_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_states_velocity_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_states_effort_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_states_temperature_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_control_level_.resize(
+            info_.joints.size(), 
+            cubemars::JointMode::UNDEFINED);
+
+        return hw::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn CubemarsHardwareInterface::on_configure(
+    hw::CallbackReturn CubemarsHardwareInterface::on_configure(
         const rclcpp_lifecycle::State &)
     {
 
         RCLCPP_INFO(
-            rclcpp::get_logger("CubemarsHardwareInterface"), "Configuring interface %s", can_interface_.c_str());
+            rclcpp::get_logger("CubemarsHardwareInterface"), 
+            "Configuring interface %s", can_interface_.c_str());
 
         struct sockaddr_can addr;
         struct ifreq ifr;
@@ -86,13 +125,18 @@ namespace cubemars_hardware_interface
             "Failed to create CAN socket");
         can_socket_fd_ = ret_val;
 
-        RCLCPP_DEBUG(
-            rclcpp::get_logger("CubemarsHardwareInterface"), "Got enable_loopback_: '%i'", enable_loopback_);
+        RCLCPP_INFO(
+            rclcpp::get_logger("CubemarsHardwareInterface"), 
+            "Got enable_loopback_: '%i'", enable_loopback_);
 
         // disable loopback
         // loopback = 0; /* 0 = disabled, 1 = enabled  */
         CHECK_SC(
-            setsockopt(can_socket_fd_, SOL_CAN_RAW, CAN_RAW_LOOPBACK, &enable_loopback_, sizeof(enable_loopback_)),
+            setsockopt(can_socket_fd_, 
+                       SOL_CAN_RAW, 
+                       CAN_RAW_LOOPBACK, 
+                       &enable_loopback_, 
+                       sizeof(enable_loopback_)),
             "Failed to set loopack of CAN socket");
 
         memset(&ifr, 0, sizeof(ifr));
@@ -107,15 +151,21 @@ namespace cubemars_hardware_interface
         addr.can_family = AF_CAN;
         addr.can_ifindex = ifr.ifr_ifindex;
         CHECK_SC(
-            bind(can_socket_fd_, (struct sockaddr *)&addr, sizeof(struct sockaddr)),
+            bind(can_socket_fd_, 
+                 (struct sockaddr *)&addr, 
+                 sizeof(struct sockaddr)),
             "Failed to bind CAN socket");
 
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 1000;
-        
+        tv.tv_usec = 500000;
+
         CHECK_SC(
-            setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)),
+            setsockopt(can_socket_fd_, 
+                       SOL_SOCKET, 
+                       SO_RCVTIMEO, 
+                       (const char *)&tv, 
+                       sizeof(struct timeval)),
             "Failed to set socket option for timeout");
 
         // CHECK_SC(
@@ -133,103 +183,103 @@ namespace cubemars_hardware_interface
             hw_states_temperature_[i] = 0;
         }
 
-        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Successfully configured!");
+        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                    "Successfully configured!");
 
-        return hardware_interface::CallbackReturn::SUCCESS;
+        return hw::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn CubemarsHardwareInterface::on_activate(
+    hw::CallbackReturn CubemarsHardwareInterface::on_activate(
         const rclcpp_lifecycle::State &)
     {
         for (auto joint : hw_joint_configs_)
         {
-            // if (CubemarsHardwareInterface::set_zero_position(joint.can_id) != hardware_interface::return_type::OK){
-            //     RCLCPP_ERROR(rclcpp::get_logger("CubemarsHardwareInterface"), "Failed to set zero position on joint %s (id=%i)!", joint.name.c_str(), joint.can_id);
-            //     return hardware_interface::CallbackReturn::ERROR;
+            // if (set_zero_position(joint.can_id) != hw::return_type::OK){
+            //     RCLCPP_ERROR(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                                // "Failed to set zero position on joint %s (id=%i)!", 
+                                // joint.name.c_str(), 
+                                // joint.can_id);
+            //     return hw::CallbackReturn::ERROR;
             // }
 
-            if (CubemarsHardwareInterface::start_motor_control_mode(joint.can_id) != hardware_interface::return_type::OK)
+            if (start_motor_control_mode(joint.can_id) != hw::return_type::OK)
             {
-                RCLCPP_ERROR(rclcpp::get_logger("CubemarsHardwareInterface"), "Failed to start motor control mode on joint %s (id=%i): %s", joint.name.c_str(), joint.can_id, strerror(errno));
-                return hardware_interface::CallbackReturn::ERROR;
+                RCLCPP_ERROR(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                    "Failed to start motor control mode on joint %s (id=%i): %s", 
+                    joint.name.c_str(), joint.can_id, strerror(errno));
+                return hw::CallbackReturn::ERROR;
             }
 
-            RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Joint %s (id=%i) started!", joint.name.c_str(), joint.can_id);
+            RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                        "Joint %s (id=%i) activated!", 
+                        joint.name.c_str(), 
+                        joint.can_id);
         }
-        // int ret_val;
-        // CHECK_SC(
-        //     fcntl(can_socket_fd_, F_SETFL, O_NONBLOCK),
-        //     "Failed to set CAN socket nonblocking");
 
-        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Successfully activated!");
+        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                    "Successfully activated!");
 
-        return hardware_interface::CallbackReturn::SUCCESS;
+        return hw::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn CubemarsHardwareInterface::on_cleanup(
+    hw::CallbackReturn CubemarsHardwareInterface::on_cleanup(
         const rclcpp_lifecycle::State &)
     {
 
-        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Successfully cleaned!");
+        RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                    "Successfully cleaned!");
+
         ::close(can_socket_fd_);
 
-        return hardware_interface::CallbackReturn::SUCCESS;
+        return hw::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn CubemarsHardwareInterface::on_deactivate(
+    hw::CallbackReturn CubemarsHardwareInterface::on_deactivate(
         const rclcpp_lifecycle::State &)
     {
         RCLCPP_INFO(
-            rclcpp::get_logger("CubemarsHardwareInterface"), "Deactivating ...please wait...");
+            rclcpp::get_logger("CubemarsHardwareInterface"), 
+            "Deactivating joints...");
+
+        hw::CallbackReturn ret_val = hw::CallbackReturn::SUCCESS;
         for (auto joint : hw_joint_configs_)
         {
-            CubemarsHardwareInterface::exit_motor_control_mode(joint.can_id);
-            RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Joint %s (id=%i) deactivated!", joint.name.c_str(), joint.can_id);
+            if (exit_motor_control_mode(joint.can_id) == hw::return_type::OK)
+            {
+                RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                            "Joint %s (id=%i) deactivated!", 
+                            joint.name.c_str(), joint.can_id);
+            }
+            else
+            {
+                RCLCPP_ERROR(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                             "Failed to deactivate Joint %s (id=%i)!", 
+                             joint.name.c_str(), joint.can_id);
+
+                ret_val = hw::CallbackReturn::ERROR;
+            }
         }
         RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Successfully deactivated!");
 
-        return hardware_interface::CallbackReturn::SUCCESS;
+        return ret_val;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::read(
+    hw::return_type CubemarsHardwareInterface::read(
         const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
     {
-        // int nbytes;
-        // struct can_frame frame;
+        // we are reading in write to ensure alternating writes/reads
+        // with no CAN id collisions on the bus (cubemars joints use the same CAN id 
+        // for the response frame)
 
-        // while ((nbytes = ::read(can_socket_fd_, &frame, CAN_MTU)) > 0)
-        // {
-        //     // struct timeval tv;
-        //     // ioctl(s, SIOCGSTAMP, &tv);
-
-        //     int ret_val = CubemarsHardwareInterface::unpack_reply(frame);
-        //     if (ret_val != cubemars::ErrorCode::FAULT_CODE_NONE)
-        //     {
-        //         return hardware_interface::return_type::ERROR;
-        //     }
-        //     return hardware_interface::return_type::OK;
-        // }
-
-        // if (nbytes < 0)
-        // {
-        //     RCLCPP_WARN(
-        //         rclcpp::get_logger("CubemarsHardwareInterface"),
-        //         "Could not read from can on interface: '%s': '%s'.", can_interface_.c_str(), strerror(errno));
-        //     return hardware_interface::return_type::OK;
-        // }
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::write(
+    hw::return_type CubemarsHardwareInterface::write(
         const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
     {
         struct can_frame frame;
-        memset(&frame, 0, CAN_MTU);
 
-        // RCLCPP_INFO(
-        //     rclcpp::get_logger("CubemarsHardwareInterface"), "Writing...");
-
-        for (uint i = 0; i < hw_joint_configs_.size(); i++)
+        for (uint i : sorted_idx_)
         {
             memset(&frame, 0, CAN_MTU);
             CubemarsHardwareInterface::pack_cmd(
@@ -240,91 +290,114 @@ namespace cubemars_hardware_interface
                 hw_joint_configs_[i],
                 hw_control_level_[i]);
 
-            if (CubemarsHardwareInterface::write_to_can(frame) != hardware_interface::return_type::OK)
+            if (CubemarsHardwareInterface::write_to_can(frame) != hw::return_type::OK)
             {
-                return hardware_interface::return_type::ERROR;
+                return hw::return_type::ERROR;
             }
+        }
 
+        for ([[maybe_unused]] uint i : sorted_idx_)
+        {
             memset(&frame, 0, CAN_MTU);
+
             int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
-
-            // struct timeval tv;
-            // ioctl(s, SIOCGSTAMP, &tv);
-
-            int ret_val = CubemarsHardwareInterface::unpack_reply(frame);
-            if (ret_val != cubemars::ErrorCode::FAULT_CODE_NONE)
-            {
-                return hardware_interface::return_type::ERROR;
-            }
 
             if (nbytes < 0)
             {
                 RCLCPP_WARN(
                     rclcpp::get_logger("CubemarsHardwareInterface"),
-                    "Could not read from can on interface: '%s': '%s'.", can_interface_.c_str(), strerror(errno));
-                return hardware_interface::return_type::OK;
+                    "Could not read from can on interface: '%s': '%s'", 
+                    can_interface_.c_str(), strerror(errno));
+                return hw::return_type::OK;
+            }
+
+            if (frame.can_id == 0)
+            {
+                // TODO more sophisticated error handling here
+                return hw::return_type::ERROR;
+            }
+
+            int ret_val = CubemarsHardwareInterface::unpack_reply(frame);
+            if (ret_val != cubemars::ErrorCode::FAULT_CODE_NONE)
+            {
+                return hw::return_type::ERROR;
             }
         }
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
-    std::vector<hardware_interface::StateInterface>
+    std::vector<hw::StateInterface>
     CubemarsHardwareInterface::export_state_interfaces()
     {
-        std::vector<hardware_interface::StateInterface> state_interfaces;
+        std::vector<hw::StateInterface> state_interfaces;
         for (uint i = 0; i < info_.joints.size(); i++)
         {
-            state_interfaces.emplace_back(hardware_interface::StateInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_states_position_[i]));
-            state_interfaces.emplace_back(hardware_interface::StateInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_VELOCITY, &hw_states_velocity_[i]));
-            state_interfaces.emplace_back(hardware_interface::StateInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_states_effort_[i]));
-            state_interfaces.emplace_back(hardware_interface::StateInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_TEMPERATURE, &hw_states_temperature_[i]));
+            state_interfaces.emplace_back(hw::StateInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_POSITION, 
+                &hw_states_position_[i]));
+            state_interfaces.emplace_back(hw::StateInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_VELOCITY, 
+                &hw_states_velocity_[i]));
+            state_interfaces.emplace_back(hw::StateInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_EFFORT, 
+                &hw_states_effort_[i]));
+            state_interfaces.emplace_back(hw::StateInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_TEMPERATURE, 
+                &hw_states_temperature_[i]));
         }
 
         return state_interfaces;
     }
 
-    std::vector<hardware_interface::CommandInterface>
+    std::vector<hw::CommandInterface>
     CubemarsHardwareInterface::export_command_interfaces()
     {
-        std::vector<hardware_interface::CommandInterface> command_interfaces;
+        std::vector<hw::CommandInterface> command_interfaces;
         for (uint i = 0; i < info_.joints.size(); i++)
         {
-            command_interfaces.emplace_back(hardware_interface::CommandInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_commands_position_[i]));
-            command_interfaces.emplace_back(hardware_interface::CommandInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_VELOCITY, &hw_commands_velocity_[i]));
-            command_interfaces.emplace_back(hardware_interface::CommandInterface(
-                info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_commands_effort_[i]));
+            command_interfaces.emplace_back(hw::CommandInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_POSITION, 
+                &hw_commands_position_[i]));
+            command_interfaces.emplace_back(hw::CommandInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_VELOCITY, 
+                &hw_commands_velocity_[i]));
+            command_interfaces.emplace_back(hw::CommandInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_EFFORT, 
+                &hw_commands_effort_[i]));
         }
 
         return command_interfaces;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::prepare_command_mode_switch(
+    hw::return_type CubemarsHardwareInterface::prepare_command_mode_switch(
         const std::vector<std::string> &start_interfaces,
         const std::vector<std::string> &stop_interfaces)
     {
         RCLCPP_INFO(
-            rclcpp::get_logger("CubemarsHardwareInterface"), "Preparing mode switch...");
+            rclcpp::get_logger("CubemarsHardwareInterface"), 
+            "Preparing mode switch...");
 
         std::vector<cubemars::JointMode> new_modes = {};
         for (std::string key : start_interfaces)
         {
             for (std::size_t i = 0; i < info_.joints.size(); i++)
             {
-                if (key == info_.joints[i].name + "/" + hardware_interface::HW_IF_POSITION)
+                if (key == info_.joints[i].name + "/" + hw::HW_IF_POSITION)
                 {
                     new_modes.push_back(cubemars::JointMode::POSITION);
                 }
-                if (key == info_.joints[i].name + "/" + hardware_interface::HW_IF_VELOCITY)
+                if (key == info_.joints[i].name + "/" + hw::HW_IF_VELOCITY)
                 {
                     new_modes.push_back(cubemars::JointMode::VELOCITY);
                 }
-                if (key == info_.joints[i].name + "/" + hardware_interface::HW_IF_EFFORT)
+                if (key == info_.joints[i].name + "/" + hw::HW_IF_EFFORT)
                 {
                     new_modes.push_back(cubemars::JointMode::EFFORT);
                 }
@@ -333,7 +406,7 @@ namespace cubemars_hardware_interface
 
         if (new_modes.size() != info_.joints.size())
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
         // Stop motion on all relevant joints that are stopping
@@ -346,7 +419,7 @@ namespace cubemars_hardware_interface
                     hw_commands_position_[i] = hw_states_position_[i];
                     hw_commands_velocity_[i] = 0;
                     hw_commands_effort_[i] = 0;
-                    hw_control_level_[i] = cubemars::JointMode::UNDEFINED; // Revert to undefined
+                    hw_control_level_[i] = cubemars::JointMode::UNDEFINED;
                 }
             }
         }
@@ -356,124 +429,123 @@ namespace cubemars_hardware_interface
             if (hw_control_level_[i] != cubemars::JointMode::UNDEFINED)
             {
                 // Something else is using the joint! Abort!
-                return hardware_interface::return_type::ERROR;
+                return hw::return_type::ERROR;
             }
             hw_control_level_[i] = new_modes[i];
         }
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
-    hardware_interface::return_type CubemarsHardwareInterface::write_to_can(can_frame frame)
+
+    hw::return_type CubemarsHardwareInterface::write_to_can(can_frame frame)
     {
         if (::write(can_socket_fd_, &frame, sizeof(struct can_frame)) == -1)
         {
             RCLCPP_WARN(
                 rclcpp::get_logger("CubemarsHardwareInterface"),
-                "Could not write to can on interface: '%s': '%s'.", can_interface_.c_str(), strerror(errno));
-            return hardware_interface::return_type::ERROR;
+                "Could not write to can on interface: '%s': '%s'.", 
+                can_interface_.c_str(), strerror(errno));
+            return hw::return_type::ERROR;
         }
 
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::start_motor_control_mode(int can_id)
+    hw::return_type CubemarsHardwareInterface::start_motor_control_mode(
+        canid_t can_id)
     {
         struct can_frame frame;
-        // frame.can_id = can_id;
-        // memcpy(frame.data, cubemars::START_MOTOR_CONTROL_MODE.data(), cubemars::START_MOTOR_CONTROL_MODE.size());
-        // frame.len = cubemars::START_MOTOR_CONTROL_MODE.size();
-
-        // std::string data = "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFC";
 
         memset(&frame, 0, sizeof(frame));
         frame.can_id = can_id;
-        frame.len = 8;
-        // frame.flags = 0;
-        memcpy(frame.data, cubemars::START_MOTOR_CONTROL_MODE.data(), cubemars::START_MOTOR_CONTROL_MODE.size());
-        if (CubemarsHardwareInterface::write_to_can(frame) != hardware_interface::return_type::OK)
+        std::copy(cubemars::START_MOTOR_CONTROL_MODE.begin(), cubemars::START_MOTOR_CONTROL_MODE.end(), frame.data);
+        frame.len = cubemars::START_MOTOR_CONTROL_MODE.size();
+        // memcpy(frame.data, cubemars::START_MOTOR_CONTROL_MODE.data(), cubemars::START_MOTOR_CONTROL_MODE.size());
+        if (CubemarsHardwareInterface::write_to_can(frame) != hw::return_type::OK)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
         memset(&frame, 0, sizeof(frame));
         int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
         if (nbytes <= 0)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
         if (frame.can_id != can_id)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
         if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::exit_motor_control_mode(int can_id)
+    hw::return_type CubemarsHardwareInterface::exit_motor_control_mode(canid_t can_id)
     {
         struct can_frame frame = {};
         frame.can_id = can_id;
         frame.len = 8;
-        memcpy(frame.data, cubemars::EXIT_MOTOR_CONTROL_MODE.data(), cubemars::EXIT_MOTOR_CONTROL_MODE.size());
-        // frame.data = cubemars::EXIT_MOTOR_CONTROL_MODE.data();
+
+        std::copy(cubemars::EXIT_MOTOR_CONTROL_MODE.begin(), cubemars::EXIT_MOTOR_CONTROL_MODE.end(), frame.data);
         frame.len = cubemars::EXIT_MOTOR_CONTROL_MODE.size();
-        if (CubemarsHardwareInterface::write_to_can(frame) != hardware_interface::return_type::OK)
+
+        if (CubemarsHardwareInterface::write_to_can(frame) != hw::return_type::OK)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
         memset(&frame, 0, sizeof(frame));
         int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
         if (nbytes <= 0)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
         if (frame.can_id != can_id)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
         if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
-    hardware_interface::return_type CubemarsHardwareInterface::set_zero_position(int can_id)
+    hw::return_type CubemarsHardwareInterface::set_zero_position(canid_t can_id)
     {
 
         struct can_frame frame;
         memset(&frame, 0, sizeof(frame));
         frame.can_id = can_id;
-        frame.len = 8;
 
-        memcpy(frame.data, cubemars::SET_ZERO_POSITION.data(), cubemars::SET_ZERO_POSITION.size());
+        std::copy(cubemars::SET_ZERO_POSITION.begin(), cubemars::SET_ZERO_POSITION.end(), frame.data);
+
         frame.len = cubemars::SET_ZERO_POSITION.size();
 
-        if (CubemarsHardwareInterface::write_to_can(frame) != hardware_interface::return_type::OK)
+        if (write_to_can(frame) != hw::return_type::OK)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
         memset(&frame, 0, sizeof(frame));
         int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
         if (nbytes <= 0)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
         if (frame.can_id != can_id)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
-        if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
+        if (unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
         {
-            return hardware_interface::return_type::ERROR;
+            return hw::return_type::ERROR;
         }
 
-        return hardware_interface::return_type::OK;
+        return hw::return_type::OK;
     }
 
     void CubemarsHardwareInterface::pack_cmd(
@@ -488,25 +560,58 @@ namespace cubemars_hardware_interface
         double kd = 0;
         if (control_mode == cubemars::JointMode::POSITION)
         {
-            kp = fminf(fmaxf(joint_config.kd_MIN, joint_config.kd), joint_config.kd_MAX);
-            kd = fminf(fmaxf(joint_config.kp_MIN, joint_config.kp), joint_config.kp_MAX);
+            kp = fminf(
+                    fmaxf(joint_config.kd_MIN, joint_config.kd), 
+                    joint_config.kd_MAX);
+
+            kd = fminf(
+                    fmaxf(joint_config.kp_MIN, joint_config.kp), 
+                    joint_config.kp_MAX);
         }
         else if (control_mode == cubemars::JointMode::VELOCITY)
         {
-            kd = fminf(fmaxf(joint_config.kp_MIN, joint_config.kp), joint_config.kp_MAX);
+            kd = fminf(
+                    fmaxf(joint_config.kp_MIN, joint_config.kp), 
+                    joint_config.kp_MAX);
         }
 
         /// limit data to be within bounds ///
-        p_des = fminf(fmaxf(joint_config.P_MIN, p_des), joint_config.P_MAX);
-        v_des = fminf(fmaxf(joint_config.V_MIN, v_des), joint_config.V_MAX);
-        t_ff = fminf(fmaxf(joint_config.I_MIN, t_ff), joint_config.I_MAX);
+        p_des = fminf(
+                    fmaxf(joint_config.P_MIN, p_des), 
+                    joint_config.P_MAX);
+        v_des = fminf(
+                    fmaxf(joint_config.V_MIN, v_des), 
+                    joint_config.V_MAX);
+        t_ff = fminf(
+                    fmaxf(joint_config.I_MIN, t_ff), 
+                    joint_config.I_MAX);
 
         /// convert floats to unsigned ints ///
-        uint16_t p_int = float_to_uint(p_des, joint_config.P_MIN, joint_config.P_MAX, 16);
-        uint16_t v_int = float_to_uint(v_des, joint_config.V_MIN, joint_config.V_MAX, 12);
-        uint16_t kp_int = float_to_uint(kp, joint_config.kd_MIN, joint_config.kd_MAX, 12);
-        uint16_t kd_int = float_to_uint(kd, joint_config.kp_MIN, joint_config.kp_MAX, 12);
-        uint16_t t_int = float_to_uint(t_ff, joint_config.I_MIN, joint_config.I_MAX, 12);
+        uint16_t p_int = float_to_uint(
+            p_des, 
+            joint_config.P_MIN, 
+            joint_config.P_MAX, 
+            16);
+        uint16_t v_int = float_to_uint(
+            v_des, 
+            joint_config.V_MIN, 
+            joint_config.V_MAX, 
+            12);
+        uint16_t kp_int = float_to_uint(
+            kp, 
+            joint_config.kd_MIN, 
+            joint_config.kd_MAX, 
+            12);
+        uint16_t kd_int = float_to_uint(
+            kd, 
+            joint_config.kp_MIN, 
+            joint_config.kp_MAX, 
+            12);
+        uint16_t t_int = float_to_uint(
+            t_ff, 
+            joint_config.I_MIN, 
+            joint_config.I_MAX, 
+            12);
 
         /// pack ints into the can buffer ///
         frame->data[0] = p_int >> 8;                           // Position High 8
@@ -521,10 +626,10 @@ namespace cubemars_hardware_interface
         frame->can_id = joint_config.can_id;
         frame->len = 8;
 
-        // RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Writing msg to '%i': Position: '%i (%f)', Velocity: '%i (%f)', Current: '%i (%f)' kd: %i, kp: %i", frame->can_id, p_int, p_des, v_int, v_des, t_int, t_ff, kp_int, kd_int);
     }
 
-    int CubemarsHardwareInterface::float_to_uint(float x, float x_min, float x_max, unsigned int bits)
+    int CubemarsHardwareInterface::float_to_uint(
+        float x, float x_min, float x_max, unsigned int bits)
     {
         /// Converts a float to an unsigned int, given range and number of bits ///
         float span = x_max - x_min;
@@ -536,7 +641,8 @@ namespace cubemars_hardware_interface
         return (int)((x - x_min) * ((float)((1 << bits) / span)));
     }
 
-    cubemars::ErrorCode CubemarsHardwareInterface::unpack_reply(struct can_frame frame)
+    cubemars::ErrorCode CubemarsHardwareInterface::unpack_reply(
+        struct can_frame frame)
     {
         cubemars::ErrorCode error_code = cubemars::ErrorCode::FAULT_CODE_NONE;
         auto it = std::find_if(
@@ -548,7 +654,7 @@ namespace cubemars_hardware_interface
         if (it != hw_joint_configs_.end())
         {
             int index = it - hw_joint_configs_.begin();
-            uint8_t id = frame.data[0];                                    // Driver ID
+            // canid_t id = frame.data[0];                                    // Driver ID
             uint16_t p_int = (frame.data[1] << 8) | frame.data[2];         // Motor Position Data
             uint16_t v_int = (frame.data[3] << 4) | (frame.data[4] >> 4);  // Motor Speed Data
             uint16_t i_int = ((frame.data[4] & 0xF) << 8) | frame.data[5]; // Motor Torque Data
@@ -560,14 +666,12 @@ namespace cubemars_hardware_interface
             float v = uint_to_float(v_int, it->V_MIN, it->V_MAX, 12);
             float i = uint_to_float(i_int, -it->I_MIN, it->I_MIN, 12);
             float temp = temp_int - 40;
-            float temp_celsius = (temp - 32) * 5 / 9 - 40;
 
             hw_states_position_[index] = p;
             hw_states_velocity_[index] = v;
             hw_states_effort_[index] = i;
             hw_states_temperature_[index] = temp;
 
-            // RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Got msg from '%i' ('%i'): Position: '%f' ('%i'), Velocity: '%f' ('%i'), Current: '%f' ('%i'), Temperature: '%f'", id, frame.can_id, p, p_int, v, v_int, i, i_int, temp);
             if (error_code != cubemars::ErrorCode::FAULT_CODE_NONE)
             {
                 RCLCPP_FATAL(
@@ -577,33 +681,11 @@ namespace cubemars_hardware_interface
         }
         else
         {
-            RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), "Device with can id %i (%i) unknwon", frame.can_id, frame.data[0]);
+            RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
+                        "Device with can id %i (%i) unknown", frame.can_id, frame.data[0]);
         }
 
         return error_code;
-
-        // float P_MIN = -12.5f;
-        // float P_MAX = 12.5f;
-        // float V_MIN = -30.0f;
-        // float V_MAX = 30.0f;
-        // float T_MIN = -18.0f;
-        // float T_MAX = 18.0f;
-        // float kd_MIN = 0;
-        // float kd_MAX = 500.0f;
-        // float kd_MIN = 0;
-        // float kd_MAX = 5.0f;
-
-        // float I_MIN = 0.0f;
-        // float I_MAX = 5.0f;
-
-        /// unpack ints from can buffer ///
-
-        // if(id == 1){
-        //   postion = p; // Read corresponding data based on ID
-        //   speed = v;
-        //   torque = i;
-        //   Temperature = T-40; // Temperature range: -40~215
-        // }
     }
 
     float CubemarsHardwareInterface::uint_to_float(int x_int, float x_min, float x_max, int bits)
@@ -619,4 +701,4 @@ namespace cubemars_hardware_interface
 #include "pluginlib/class_list_macros.hpp"
 
 PLUGINLIB_EXPORT_CLASS(
-    cubemars_hardware_interface::CubemarsHardwareInterface, hardware_interface::SystemInterface)
+    cubemars_hardware_interface::CubemarsHardwareInterface, hw::SystemInterface)

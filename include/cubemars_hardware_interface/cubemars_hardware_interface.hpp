@@ -47,6 +47,8 @@ namespace cubemars_hardware_interface
     public:
         RCLCPP_SHARED_PTR_DEFINITIONS(CubemarsHardwareInterface)
 
+        ~CubemarsHardwareInterface();
+
         hardware_interface::CallbackReturn on_init(
             const hardware_interface::HardwareInfo &info) override;
 
@@ -82,11 +84,12 @@ namespace cubemars_hardware_interface
         int enable_loopback_;
 
         hardware_interface::return_type write_to_can(can_frame frame);
-        hardware_interface::return_type start_motor_control_mode(int can_id);
-        hardware_interface::return_type exit_motor_control_mode(int can_id);
-        hardware_interface::return_type set_zero_position(int can_id);
+        hardware_interface::return_type start_motor_control_mode(canid_t can_id);
+        hardware_interface::return_type exit_motor_control_mode(canid_t can_id);
+        hardware_interface::return_type set_zero_position(canid_t can_id);
 
         std::vector<cubemars::joint_config_t> hw_joint_configs_;
+        std::vector<size_t> sorted_idx_;
 
         std::vector<double> hw_commands_position_;
         std::vector<double> hw_commands_velocity_;
