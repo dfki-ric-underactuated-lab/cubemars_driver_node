@@ -21,7 +21,7 @@ colcon_build:
     - git clone --local .. src/${CI_PROJECT_NAME}
     - rosdep update --rosdistro $ROS_DISTRO
     - rosdep install --from-path src --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=build 
-    - colcon build ${CI_PROJECT_NAME} --event-handlers console_direct+ summary+ status-
+    - colcon build --event-handlers console_direct+ summary+ status-
   artifacts:
     paths:
       - 'build/install'
@@ -32,7 +32,7 @@ run_tests:
   script:
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
-    - colcon test ${CI_PROJECT_NAME}
+    - colcon test 
   needs: 
     - job: colcon_build
       artifacts: true
