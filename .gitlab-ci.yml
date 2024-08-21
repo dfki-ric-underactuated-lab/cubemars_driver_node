@@ -21,7 +21,7 @@ Build:
     - git clone --local .. src/${CI_PROJECT_NAME}
     - rosdep update --rosdistro $ROS_DISTRO
     - rosdep install --from-path src --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=build 
-    - colcon build --event-handlers console_direct+ summary+ status-
+    - colcon build --packages-up-to ${CI_PROJECT_NAME} --cmake-args -DBUILD_TESTING=ON --event-handlers console_direct+ summary+ status-
   artifacts:
     paths:
       - 'build/install'
@@ -32,7 +32,8 @@ Test:
   script:
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
-    - colcon test 
+    - colcon test --packages-select ${CI_PROJECT_NAME} 
+    - colcon test-result --all --verbose
   needs: 
     - job: Build
       artifacts: true
