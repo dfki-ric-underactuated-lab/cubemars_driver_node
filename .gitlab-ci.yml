@@ -1,0 +1,38 @@
+variables:
+  ROS_DISTRO: jazzy
+
+image: osrf/ros:$ROS_DISTRO-simulation
+
+stages:
+  - build
+  - test
+
+before_script:
+  - git config --global user.name "Gitlab Runner"
+  - git config --global user.email "<>"
+  - apt update
+
+colcon_build:
+  stage: build
+  script:
+    - source /opt/ros/$ROS_DISTRO/setup.bash
+    - mkdir -p build/src
+    - cd build/src
+    - git clone --local .. src/${CI_PROJECT_NAME}
+    - rosdep update --rosdistro $ROS_DISTRO
+    - rosdep install --from-path src --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=build 
+    - colcon build ${CI_PROJECT_NAME} --event-handlers console_direct+ summary+ status-
+  artifacts:
+    paths:
+      - 'build/install'
+    expire_in: 4 hrs
+
+run_tests:
+  stage: test
+  script:
+    - source ${CI_PROJECT_DIR}/build/install/setup.bash
+    - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
+    - colcon test ${CI_PROJECT_NAME}
+  needs: 
+    - job: colcon_build
+      artifacts: true
