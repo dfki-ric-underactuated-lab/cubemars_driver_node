@@ -3,14 +3,21 @@
 <package format="3">
   <name>cubemars_hardware_interface</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="mtrampler@todo.todo">mtrampler</maintainer>
+  <description>Ros2 control hardware interface for Cubemars (TMotors) joints</description>
+  <maintainer email="mathias.trampler@dfki.de">mtrampler</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_add_gmock</test_depend>
+  <test_depend>hardware_interface</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
