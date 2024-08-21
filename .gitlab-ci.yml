@@ -34,5 +34,5 @@ Test:
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
     - colcon test 
   needs: 
-    - job: colcon_build
+    - job: Build
       artifacts: true
