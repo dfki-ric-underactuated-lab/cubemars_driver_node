@@ -83,6 +83,8 @@ namespace cubemars_hardware_interface
         int can_socket_fd_;
         int enable_loopback_;
 
+        hardware_interface::CallbackReturn setup_socket();
+
         hardware_interface::return_type write_to_can(can_frame frame);
         hardware_interface::return_type start_motor_control_mode(canid_t can_id);
         hardware_interface::return_type exit_motor_control_mode(canid_t can_id);

@@ -108,10 +108,8 @@ namespace cubemars_hardware_interface
         return hw::CallbackReturn::SUCCESS;
     }
 
-    hw::CallbackReturn CubemarsHardwareInterface::on_configure(
-        const rclcpp_lifecycle::State &)
+    hw::CallbackReturn CubemarsHardwareInterface::setup_socket()
     {
-
         RCLCPP_INFO(
             rclcpp::get_logger("CubemarsHardwareInterface"), 
             "Configuring interface %s", can_interface_.c_str());
@@ -171,6 +169,19 @@ namespace cubemars_hardware_interface
         // CHECK_SC(
         //     fcntl(can_socket_fd_, F_SETFL, O_NONBLOCK),
         //     "Failed to set CAN socket nonblocking");
+
+        return hw::CallbackReturn::SUCCESS;
+    }
+
+
+    hw::CallbackReturn CubemarsHardwareInterface::on_configure(
+        const rclcpp_lifecycle::State &)
+    {
+        hw::CallbackReturn ret_val;
+        if ((ret_val = setup_socket()) != hw::CallbackReturn::SUCCESS){
+            return ret_val;
+        }
+
 
         for (uint i = 0; i < hw_commands_position_.size(); i++)
         {
