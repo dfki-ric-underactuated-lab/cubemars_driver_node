@@ -31,6 +31,7 @@ Test:
   stage: test
   script:
     - cd build
+    - git clone --local .. src/${CI_PROJECT_NAME}
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
     - colcon test --packages-select ${CI_PROJECT_NAME} 
