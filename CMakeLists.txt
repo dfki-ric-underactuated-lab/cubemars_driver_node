@@ -13,13 +13,13 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp_lifecycle
 )
 
-# Specify the required version of ros2_control
-find_package(controller_manager 4.0.0)
-# Handle the case where the required version is not found
-if(NOT controller_manager_FOUND)
-  message(FATAL_ERROR "ros2_control version 4.0.0 or higher is required. "
-  "Are you using the correct branch of the ros2_control_demos repository?")
-endif()
+# # Specify the required version of ros2_control
+# find_package(controller_manager 4.0.0)
+# # Handle the case where the required version is not found
+# if(NOT controller_manager_FOUND)
+#   message(FATAL_ERROR "ros2_control version 4.0.0 or higher is required. "
+#   "Are you using the correct branch of the repository?")
+# endif()
 
 find_package(ament_cmake REQUIRED)
 foreach(Dependency IN ITEMS ${THIS_PACKAGE_INCLUDE_DEPENDS})
@@ -34,8 +34,8 @@ add_library(
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC
-$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-$<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
 )
 ament_target_dependencies(
   ${PROJECT_NAME} PUBLIC
@@ -63,19 +63,41 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
+  # find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gmock REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
+
   find_package(hardware_interface REQUIRED)
 
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
-  set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
-  set(ament_cmake_cpplint_FOUND TRUE)
+  find_package(ros2_control_test_assets REQUIRED)
 
-  ament_lint_auto_find_test_dependencies()
+  # add_library(test_hardware_components SHARED
+  #   test/test_load_cubemars_hardware_interface.cpp
+  # )
+  ament_add_gmock(test_${PROJECT_NAME} test/test_cubemars_hardware_interface.cpp)
+  target_include_directories(test_${PROJECT_NAME} PRIVATE include
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  )
+  # target_link_libraries(test_cubemars_hardware_interface hardware_interface)
+  ament_target_dependencies(test_${PROJECT_NAME}
+    ros2_control_test_assets
+    rclcpp
+    hardware_interface
+  )
+  
+  # pluginlib_export_plugin_description_file(
+  #   hardware_interface test/test_hardware_components/test_hardware_components.xml
+  # )
+  # # the following line skips the linter which checks for copyrights
+  # # comment the line when a copyright and license is added to all source files
+  # set(ament_cmake_copyright_FOUND TRUE)
+  # # the following line skips cpplint (only works in a git repo)
+  # # comment the line when this package is in a git repo and when
+  # # a copyright and license is added to all source files
+  # set(ament_cmake_cpplint_FOUND TRUE)
+
+  # ament_lint_auto_find_test_dependencies()
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

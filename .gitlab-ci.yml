@@ -30,6 +30,9 @@ Build:
 Test:
   stage: test
   script:
+    - modprobe vcan
+    - ip link add dev vcan0 type vcan
+    - ip link set up vcan0
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
     - colcon test --packages-select ${CI_PROJECT_NAME} 
