@@ -30,9 +30,6 @@ Build:
 Test:
   stage: test
   script:
-    - apt-get install iproute2 -y
-    - ip link add dev vcan0 type dummy
-    - ip link set up vcan0
     - cd build
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
     - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
