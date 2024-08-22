@@ -30,6 +30,7 @@ Build:
 Test:
   stage: test
   script:
+    - apt-get install iproute2
     - ip link add dev vcan0 type dummy
     - ip link set up vcan0
     - cd build
