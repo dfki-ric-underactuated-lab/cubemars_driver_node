@@ -38,3 +38,9 @@ Test:
   needs: 
     - job: Build
       artifacts: true
+  artifacts:
+    when: always
+    reports:
+      junit: build/build/cubemars_hardware_interface/test_results/cubemars_hardware_interface/test_cubemars_hardware_interface.gtest.xml
+
+  
