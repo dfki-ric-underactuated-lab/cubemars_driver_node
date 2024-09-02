@@ -82,6 +82,7 @@ namespace cubemars_hardware_interface
         std::string can_interface_;
         int can_socket_fd_;
         int enable_loopback_;
+        bool set_zero_pos_on_startup_;
 
         hardware_interface::CallbackReturn setup_socket();
 

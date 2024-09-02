@@ -118,6 +118,7 @@ namespace cubemars
         double kp_MAX = std::numeric_limits<double>::quiet_NaN();
         double kd_MIN = std::numeric_limits<double>::quiet_NaN();
         double kd_MAX = std::numeric_limits<double>::quiet_NaN();
+        bool invert = false;
     };
 
     static const std::array<uint8_t, 8> START_MOTOR_CONTROL_MODE = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
