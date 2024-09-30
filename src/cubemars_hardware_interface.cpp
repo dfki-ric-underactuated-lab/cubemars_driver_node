@@ -314,6 +314,16 @@ namespace cubemars_hardware_interface
         return ret_val;
     }
 
+    hw::CallbackReturn on_error(const rclcpp_lifecycle::State &)
+    {
+        RCLCPP_INFO(
+            rclcpp::get_logger("CubemarsHardwareInterface"), 
+            "ERROR");
+
+        return hw::CallbackReturn::SUCCESS;
+    }
+    
+
     hw::return_type CubemarsHardwareInterface::read(
         const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
     {
@@ -354,11 +364,11 @@ namespace cubemars_hardware_interface
 
             if (nbytes < 0)
             {
-                RCLCPP_WARN(
+                RCLCPP_ERROR(
                     rclcpp::get_logger("CubemarsHardwareInterface"),
                     "Could not read from can on interface: '%s': '%s'", 
                     can_interface_.c_str(), strerror(errno));
-                return hw::return_type::OK;
+                return hw::return_type::ERROR;
             }
 
             if (frame.can_id == 0)
