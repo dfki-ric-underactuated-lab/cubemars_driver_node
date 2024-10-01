@@ -90,6 +90,7 @@ namespace cubemars_hardware_interface
         hardware_interface::CallbackReturn setup_socket();
 
         hardware_interface::return_type write_to_can(can_frame frame);
+        hardware_interface::return_type send_control_frame(canid_t can_id, std::array<uint8_t, 8> control_sequence);
         hardware_interface::return_type start_motor_control_mode(canid_t can_id);
         hardware_interface::return_type exit_motor_control_mode(canid_t can_id);
         hardware_interface::return_type set_zero_position(canid_t can_id);

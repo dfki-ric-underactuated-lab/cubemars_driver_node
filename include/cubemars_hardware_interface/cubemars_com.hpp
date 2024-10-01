@@ -106,18 +106,24 @@ namespace cubemars
     {
         canid_t can_id = 0;
         std::string name = "";
-        double kp = std::numeric_limits<double>::quiet_NaN();
-        double kd = std::numeric_limits<double>::quiet_NaN();
+        double KP = std::numeric_limits<double>::quiet_NaN();
+        double KD = std::numeric_limits<double>::quiet_NaN();
         double P_MIN = std::numeric_limits<double>::quiet_NaN();
         double P_MAX = std::numeric_limits<double>::quiet_NaN();
         double V_MIN = std::numeric_limits<double>::quiet_NaN();
         double V_MAX = std::numeric_limits<double>::quiet_NaN();
         double I_MIN = std::numeric_limits<double>::quiet_NaN();
         double I_MAX = std::numeric_limits<double>::quiet_NaN();
-        double kp_MIN = std::numeric_limits<double>::quiet_NaN();
-        double kp_MAX = std::numeric_limits<double>::quiet_NaN();
-        double kd_MIN = std::numeric_limits<double>::quiet_NaN();
-        double kd_MAX = std::numeric_limits<double>::quiet_NaN();
+        double KP_MIN = std::numeric_limits<double>::quiet_NaN();
+        double KP_MAX = std::numeric_limits<double>::quiet_NaN();
+        double KD_MIN = std::numeric_limits<double>::quiet_NaN();
+        double KD_MAX = std::numeric_limits<double>::quiet_NaN();
+        double POSITION_COMMAND_LIMIT_MIN = std::numeric_limits<double>::quiet_NaN();
+        double POSITION_COMMAND_LIMIT_MAX = std::numeric_limits<double>::quiet_NaN();
+        double VELOCITY_COMMAND_LIMIT_MIN = std::numeric_limits<double>::quiet_NaN();
+        double VELOCITY_COMMAND_LIMIT_MAX = std::numeric_limits<double>::quiet_NaN();        
+        double EFFORT_COMMAND_LIMIT_MIN = std::numeric_limits<double>::quiet_NaN();
+        double EFFORT_COMMAND_LIMIT_MAX = std::numeric_limits<double>::quiet_NaN();
         bool invert = false;
     };
 

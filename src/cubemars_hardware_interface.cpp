@@ -54,6 +54,14 @@ namespace cubemars_hardware_interface
             conf.kd_MAX = stod(joint.parameters["kd_max"]);
             conf.kp_MIN = stod(joint.parameters["kp_min"]);
             conf.kp_MAX = stod(joint.parameters["kp_max"]);
+
+            conf.P_MIN = stod(joint.parameters["pos_min"]);
+            conf.P_MAX = stod(joint.parameters["pos_max"]);
+            conf.V_MIN = stod(joint.parameters["vel_min"]);
+            conf.V_MAX = stod(joint.parameters["vel_max"]);
+            conf.I_MIN = stod(joint.parameters["effort_min"]);
+            conf.I_MAX = stod(joint.parameters["effort_max"]);
+
             conf.invert = joint.parameters["invert"] == "True"
               || joint.parameters["invert"] == "true"
               || joint.parameters["invert"] == "1";
@@ -62,18 +70,18 @@ namespace cubemars_hardware_interface
             {
                 if (command_interface.name == hw::HW_IF_POSITION)
                 {
-                    conf.P_MIN = stod(command_interface.min);
-                    conf.P_MAX = stod(command_interface.max);
+                    conf.POSITION_COMMAND_LIMIT_MIN = stod(command_interface.min);
+                    conf.POSITION_COMMAND_LIMIT_MAX = stod(command_interface.max);
                 }
                 else if (command_interface.name == hw::HW_IF_VELOCITY)
                 {
-                    conf.V_MIN = stod(command_interface.min);
-                    conf.V_MAX = stod(command_interface.max);
+                    conf.VELOCITY_COMMAND_LIMIT_MIN = stod(command_interface.min);
+                    conf.VELOCITY_COMMAND_LIMIT_MAX = stod(command_interface.max);
                 }
                 else if (command_interface.name == hw::HW_IF_EFFORT)
                 {
-                    conf.I_MIN = stod(command_interface.min);
-                    conf.I_MAX = stod(command_interface.max);
+                    conf.EFFORT_COMMAND_LIMIT_MIN = stod(command_interface.min);
+                    conf.EFFORT_COMMAND_LIMIT_MAX = stod(command_interface.max);
                 }
             }
 
@@ -510,15 +518,15 @@ namespace cubemars_hardware_interface
         return hw::return_type::OK;
     }
 
-    hw::return_type CubemarsHardwareInterface::start_motor_control_mode(
-        canid_t can_id)
+    hw::return_type CubemarsHardwareInterface::send_control_frame(
+        canid_t can_id, std::array<uint8_t, 8> control_sequence)
     {
         struct can_frame frame;
 
         memset(&frame, 0, sizeof(frame));
         frame.can_id = can_id;
-        std::copy(cubemars::START_MOTOR_CONTROL_MODE.begin(), cubemars::START_MOTOR_CONTROL_MODE.end(), frame.data);
-        frame.len = cubemars::START_MOTOR_CONTROL_MODE.size();
+        std::copy(control_sequence.begin(), control_sequence.end(), frame.data);
+        frame.len = control_sequence.size();
         // memcpy(frame.data, cubemars::START_MOTOR_CONTROL_MODE.data(), cubemars::START_MOTOR_CONTROL_MODE.size());
         if (CubemarsHardwareInterface::write_to_can(frame) != hw::return_type::OK)
         {
@@ -542,70 +550,22 @@ namespace cubemars_hardware_interface
         }
         return hw::return_type::OK;
     }
+    
+
+    hw::return_type CubemarsHardwareInterface::start_motor_control_mode(
+        canid_t can_id)
+    {
+        return send_control_frame(can_id, cubemars::START_MOTOR_CONTROL_MODE);
+    }
 
     hw::return_type CubemarsHardwareInterface::exit_motor_control_mode(canid_t can_id)
     {
-        struct can_frame frame = {};
-        frame.can_id = can_id;
-        frame.len = 8;
-
-        std::copy(cubemars::EXIT_MOTOR_CONTROL_MODE.begin(), cubemars::EXIT_MOTOR_CONTROL_MODE.end(), frame.data);
-        frame.len = cubemars::EXIT_MOTOR_CONTROL_MODE.size();
-
-        if (CubemarsHardwareInterface::write_to_can(frame) != hw::return_type::OK)
-        {
-            return hw::return_type::ERROR;
-        }
-
-        memset(&frame, 0, sizeof(frame));
-        int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
-        if (nbytes <= 0)
-        {
-            return hw::return_type::ERROR;
-        }
-        if (frame.can_id != can_id)
-        {
-            return hw::return_type::ERROR;
-        }
-        if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
-        {
-            return hw::return_type::ERROR;
-        }
-        return hw::return_type::OK;
+        return send_control_frame(can_id, cubemars::EXIT_MOTOR_CONTROL_MODE);
     }
 
     hw::return_type CubemarsHardwareInterface::set_zero_position(canid_t can_id)
     {
-
-        struct can_frame frame;
-        memset(&frame, 0, sizeof(frame));
-        frame.can_id = can_id;
-
-        std::copy(cubemars::SET_ZERO_POSITION.begin(), cubemars::SET_ZERO_POSITION.end(), frame.data);
-
-        frame.len = cubemars::SET_ZERO_POSITION.size();
-
-        if (write_to_can(frame) != hw::return_type::OK)
-        {
-            return hw::return_type::ERROR;
-        }
-
-        memset(&frame, 0, sizeof(frame));
-        int nbytes = ::read(can_socket_fd_, &frame, CAN_MTU);
-        if (nbytes <= 0)
-        {
-            return hw::return_type::ERROR;
-        }
-        if (frame.can_id != can_id)
-        {
-            return hw::return_type::ERROR;
-        }
-        if (unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
-        {
-            return hw::return_type::ERROR;
-        }
-
-        return hw::return_type::OK;
+        return send_control_frame(can_id, cubemars::SET_ZERO_POSITION);
     }
 
     void CubemarsHardwareInterface::pack_cmd(
