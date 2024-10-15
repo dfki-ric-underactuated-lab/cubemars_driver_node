@@ -54,12 +54,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -85,12 +85,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -117,12 +117,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -148,12 +148,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -179,12 +179,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -212,12 +212,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -245,12 +245,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -276,12 +276,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
@@ -309,12 +309,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=-1000
+                                     pos_limit_max:=1000
+                                     vel_limit_min:=-1000
+                                     vel_limit_max:=1000
+                                     effort_limit_min:=-1000
+                                     effort_limit_max:=1000
                                      invert:=False">
     <xacro:cubemars_ak name="${name}" 
       prefix="${prefix}" 
@@ -339,12 +339,12 @@
                                      prefix 
                                      can_id 
                                      kp kd 
-                                     pos_limit_min:=-INF
-                                     pos_limit_max:=INF
-                                     vel_limit_min:=-INF
-                                     vel_limit_max:=INF
-                                     effort_limit_min:=-INF
-                                     effort_limit_max:=INF
+                                     pos_limit_min:=nan
+                                     pos_limit_max:=nan
+                                     vel_limit_min:=nan
+                                     vel_limit_max:=nan
+                                     effort_limit_min:=nan
+                                     effort_limit_max:=nan
                                      invert:=False">
     <xacro:cubemars_ak  
       name="${name}" 
