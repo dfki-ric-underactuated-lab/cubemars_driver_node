@@ -322,16 +322,6 @@ namespace cubemars_hardware_interface
         return ret_val;
     }
 
-    hw::CallbackReturn on_error(const rclcpp_lifecycle::State &)
-    {
-        RCLCPP_INFO(
-            rclcpp::get_logger("CubemarsHardwareInterface"), 
-            "ERROR");
-
-        return hw::CallbackReturn::SUCCESS;
-    }
-    
-
     hw::return_type CubemarsHardwareInterface::read(
         const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
     {
