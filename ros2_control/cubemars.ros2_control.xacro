@@ -1,10 +1,18 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:macro name="cubemars_ak" params="name prefix can_id kp kd 
-                                          vel_min vel_max effort_min effort_max pos_min:=-12.5 pos_max:=12.5 
-                                          kp_min:=0 kp_max:=500 kd_min:=0 kd_max:=5 
-                                          pos_limit_max:=INF pos_limit_min:=-INF vel_limit_min:=nan vel_limit_max:=nan effort_limit_min:=nan effort_limit_max:=nan 
+  <xacro:macro name="cubemars_ak" params="name 
+                                          prefix 
+                                          can_id 
+                                          kp kd 
+                                          vel_min vel_max 
+                                          effort_min effort_max 
+                                          pos_limit_max pos_limit_min 
+                                          vel_limit_min vel_limit_max 
+                                          effort_limit_min effort_limit_max
+                                          pos_min:=-12.5 pos_max:=12.5 
+                                          kp_min:=0 kp_max:=500 
+                                          kd_min:=0 kd_max:=5 
                                           invert:=False">
     <joint name="${prefix}${name}">
       <param name="can_id">${can_id}</param>
@@ -42,7 +50,17 @@
     </joint>
   </xacro:macro>
 
-  <xacro:macro name="AK10-9" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK10-9" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -52,12 +70,28 @@
       vel_min="-50.0" 
       vel_max="50.0" 
       effort_min="-65.0" 
-      effort_max="65.0" 
+      effort_max="65.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     /> 
   </xacro:macro>
 
-  <xacro:macro name="AK60-6" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK60-6" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -68,12 +102,28 @@
       vel_max="45.0" 
       effort_min="-15.0" 
       effort_max="15.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
 
     /> 
   </xacro:macro>
 
-  <xacro:macro name="AK70-10" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK70-10" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -83,12 +133,28 @@
       vel_min="-50.0" 
       vel_max="50.0" 
       effort_min="-25.0" 
-      effort_max="25.0" 
+      effort_max="25.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-5" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-5" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -99,11 +165,27 @@
       vel_max="76.0" 
       effort_min="-12.0" 
       effort_max="12.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}" 
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-6" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-6" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -116,11 +198,27 @@
       vel_max="45.0" 
       effort_min="-18.0" 
       effort_max="18.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-6_V2" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-6_V2" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -133,11 +231,27 @@
       vel_max="76.0" 
       effort_min="-12.0" 
       effort_max="12.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-9" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-9" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -148,11 +262,27 @@
       vel_max="50.0" 
       effort_min="-18.0" 
       effort_max="18.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-9_V2" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-9_V2" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak 
       name="${name}" 
       prefix="${prefix}" 
@@ -165,11 +295,27 @@
       vel_max="25.64" 
       effort_min="-18.0" 
       effort_max="18.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-64" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-64" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak name="${name}" 
       prefix="${prefix}" 
       can_id="${can_id}" 
@@ -179,11 +325,27 @@
       vel_max="8.0" 
       effort_min="-144.0" 
       effort_max="144.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>
 
-  <xacro:macro name="AK80-8" params="name prefix can_id kp kd invert:=False">
+  <xacro:macro name="AK80-8" params="name 
+                                     prefix 
+                                     can_id 
+                                     kp kd 
+                                     pos_limit_min:=-INF
+                                     pos_limit_max:=INF
+                                     vel_limit_min:=-INF
+                                     vel_limit_max:=INF
+                                     effort_limit_min:=-INF
+                                     effort_limit_max:=INF
+                                     invert:=False">
     <xacro:cubemars_ak  
       name="${name}" 
       prefix="${prefix}" 
@@ -194,6 +356,12 @@
       vel_max="37.5" 
       effort_min="-32.0" 
       effort_max="32.0"
+      pos_limit_min="${pos_limit_min}"
+      pos_limit_max="${pos_limit_max}"
+      vel_limit_min="${vel_limit_min}"
+      vel_limit_max="${vel_limit_max}"
+      effort_limit_min="${effort_limit_min}"
+      effort_limit_max="${effort_limit_max}"
       invert="${invert}"
     />
   </xacro:macro>

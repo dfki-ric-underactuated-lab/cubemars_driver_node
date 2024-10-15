@@ -48,12 +48,12 @@ namespace cubemars_hardware_interface
             cubemars::joint_config_t conf;
             conf.name = joint.name;
             conf.can_id = stoi(joint.parameters["can_id"]);
-            conf.kd = stod(joint.parameters["kd"]);
-            conf.kp = stod(joint.parameters["kp"]);
-            conf.kd_MIN = stod(joint.parameters["kd_min"]);
-            conf.kd_MAX = stod(joint.parameters["kd_max"]);
-            conf.kp_MIN = stod(joint.parameters["kp_min"]);
-            conf.kp_MAX = stod(joint.parameters["kp_max"]);
+            conf.KD = stod(joint.parameters["kd"]);
+            conf.KP = stod(joint.parameters["kp"]);
+            conf.KP_MIN = stod(joint.parameters["kd_min"]);
+            conf.KD_MAX = stod(joint.parameters["kd_max"]);
+            conf.KP_MIN = stod(joint.parameters["kp_min"]);
+            conf.KP_MAX = stod(joint.parameters["kp_max"]);
 
             conf.P_MIN = stod(joint.parameters["pos_min"]);
             conf.P_MAX = stod(joint.parameters["pos_max"]);
@@ -70,18 +70,18 @@ namespace cubemars_hardware_interface
             {
                 if (command_interface.name == hw::HW_IF_POSITION)
                 {
-                    conf.POSITION_COMMAND_LIMIT_MIN = stod(command_interface.min);
-                    conf.POSITION_COMMAND_LIMIT_MAX = stod(command_interface.max);
+                    conf.POSITION_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
+                    conf.POSITION_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
                 }
                 else if (command_interface.name == hw::HW_IF_VELOCITY)
                 {
-                    conf.VELOCITY_COMMAND_LIMIT_MIN = stod(command_interface.min);
-                    conf.VELOCITY_COMMAND_LIMIT_MAX = stod(command_interface.max);
+                    conf.VELOCITY_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
+                    conf.VELOCITY_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
                 }
                 else if (command_interface.name == hw::HW_IF_EFFORT)
                 {
-                    conf.EFFORT_COMMAND_LIMIT_MIN = stod(command_interface.min);
-                    conf.EFFORT_COMMAND_LIMIT_MAX = stod(command_interface.max);
+                    conf.EFFORT_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
+                    conf.EFFORT_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
                 }
             }
 
@@ -587,18 +587,18 @@ namespace cubemars_hardware_interface
         if (control_mode == cubemars::JointMode::POSITION)
         {
             kp = fminf(
-                    fmaxf(joint_config.kd_MIN, joint_config.kd), 
-                    joint_config.kd_MAX);
+                    fmaxf(joint_config.KP_MIN, joint_config.KP), 
+                    joint_config.KP_MAX);
 
             kd = fminf(
-                    fmaxf(joint_config.kp_MIN, joint_config.kp), 
-                    joint_config.kp_MAX);
+                    fmaxf(joint_config.KD_MIN, joint_config.KD), 
+                    joint_config.KD_MAX);
         }
         else if (control_mode == cubemars::JointMode::VELOCITY)
         {
             kd = fminf(
-                    fmaxf(joint_config.kp_MIN, joint_config.kp), 
-                    joint_config.kp_MAX);
+                    fmaxf(joint_config.KD_MIN, joint_config.KD), 
+                    joint_config.KD_MAX);
         }
 
         /// limit data to be within bounds ///
@@ -611,6 +611,22 @@ namespace cubemars_hardware_interface
         t_ff = fminf(
                     fmaxf(joint_config.I_MIN, t_ff), 
                     joint_config.I_MAX);
+
+        /// limit data to be within soft limits ///
+        p_des = std::clamp(
+            p_des, 
+            joint_config.POSITION_COMMAND_SOFT_LIMIT_MIN,
+            joint_config.POSITION_COMMAND_SOFT_LIMIT_MAX);
+
+        v_des = std::clamp(
+            v_des, 
+            joint_config.VELOCITY_COMMAND_SOFT_LIMIT_MIN,
+            joint_config.VELOCITY_COMMAND_SOFT_LIMIT_MAX);
+
+        t_ff = std::clamp(
+            t_ff, 
+            joint_config.EFFORT_COMMAND_SOFT_LIMIT_MIN,
+            joint_config.EFFORT_COMMAND_SOFT_LIMIT_MAX);
 
         /// convert floats to unsigned ints ///
         uint16_t p_int = float_to_uint(
@@ -625,13 +641,13 @@ namespace cubemars_hardware_interface
             12);
         uint16_t kp_int = float_to_uint(
             kp, 
-            joint_config.kd_MIN, 
-            joint_config.kd_MAX, 
+            joint_config.KP_MIN, 
+            joint_config.KP_MAX, 
             12);
         uint16_t kd_int = float_to_uint(
             kd, 
-            joint_config.kp_MIN, 
-            joint_config.kp_MAX, 
+            joint_config.KD_MIN, 
+            joint_config.KD_MAX, 
             12);
         uint16_t t_int = float_to_uint(
             t_ff, 
