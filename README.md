@@ -31,3 +31,23 @@
 
 </robot>
 ```
+
+
+Get serial number for CAN device (e.g. can0): `udevadm info -a -p $(udevadm info -q path -p /sys/class/net/can0)| grep serial| head -n 1`
+### /etc/udev/rules.d/80-can.rules
+```
+SUBSYSTEM=="net", ACTION=="add|change", ATTRS{serial}=="JE013488", NAME="can0" 
+SUBSYSTEM=="net", ACTION=="add|change", ATTRS{serial}=="JE013486", NAME="can1"
+
+SUBSYSTEM=="net", KERNEL=="can*", ACTION=="add|change", ATTR{tx_queue_len}="1000"
+```
+
+### /etc/systemd/network/80-can.network
+```
+[Match]
+Name=can*
+
+[CAN]
+BitRate=1000K
+RestartSec=1000ms
+```
