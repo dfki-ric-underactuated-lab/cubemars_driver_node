@@ -696,13 +696,13 @@ namespace cubemars_hardware_interface
             /// convert ints to floats ///
             float p = uint_to_float(p_int, it->P_MIN, it->P_MAX, 16);
             float v = uint_to_float(v_int, it->V_MIN, it->V_MAX, 12);
-            float i = uint_to_float(i_int, -it->I_MIN, it->I_MIN, 12);
+            float i = uint_to_float(i_int, it->I_MIN, it->I_MAX, 12);
             float temp = temp_int - 40;
 
             if (it->invert){
-                p *= -1;
-                v_int *= -1;
-                i *= -1;
+                p = -p;
+                v = -v;
+                i = -i;
             }
 
             hw_states_position_[index] = p;
