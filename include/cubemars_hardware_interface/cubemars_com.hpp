@@ -118,12 +118,6 @@ namespace cubemars
         double KP_MAX = std::numeric_limits<double>::quiet_NaN();
         double KD_MIN = std::numeric_limits<double>::quiet_NaN();
         double KD_MAX = std::numeric_limits<double>::quiet_NaN();
-        float POSITION_COMMAND_SOFT_LIMIT_MIN = -std::numeric_limits<double>::max();
-        float POSITION_COMMAND_SOFT_LIMIT_MAX = std::numeric_limits<double>::max();
-        float VELOCITY_COMMAND_SOFT_LIMIT_MIN = -std::numeric_limits<double>::max();
-        float VELOCITY_COMMAND_SOFT_LIMIT_MAX = std::numeric_limits<double>::max();        
-        float EFFORT_COMMAND_SOFT_LIMIT_MIN = -std::numeric_limits<double>::max();
-        float EFFORT_COMMAND_SOFT_LIMIT_MAX = std::numeric_limits<double>::max();
         bool invert = false;
     };
 

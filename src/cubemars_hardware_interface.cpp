@@ -66,25 +66,6 @@ namespace cubemars_hardware_interface
               || joint.parameters["invert"] == "true"
               || joint.parameters["invert"] == "1";
 
-            for (auto command_interface : joint.command_interfaces)
-            {
-                if (command_interface.name == hw::HW_IF_POSITION)
-                {
-                    conf.POSITION_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
-                    conf.POSITION_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
-                }
-                else if (command_interface.name == hw::HW_IF_VELOCITY)
-                {
-                    conf.VELOCITY_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
-                    conf.VELOCITY_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
-                }
-                else if (command_interface.name == hw::HW_IF_EFFORT)
-                {
-                    conf.EFFORT_COMMAND_SOFT_LIMIT_MIN = stod(command_interface.min);
-                    conf.EFFORT_COMMAND_SOFT_LIMIT_MAX = stod(command_interface.max);
-                }
-            }
-
             hw_joint_configs_.push_back(conf);
             RCLCPP_INFO(
                 rclcpp::get_logger("CubemarsHardwareInterface"), 
@@ -601,22 +582,6 @@ namespace cubemars_hardware_interface
         t_ff = fminf(
                     fmaxf(joint_config.I_MIN, t_ff), 
                     joint_config.I_MAX);
-
-        /// limit data to be within soft limits ///
-        p_des = std::clamp(
-            p_des, 
-            joint_config.POSITION_COMMAND_SOFT_LIMIT_MIN,
-            joint_config.POSITION_COMMAND_SOFT_LIMIT_MAX);
-
-        v_des = std::clamp(
-            v_des, 
-            joint_config.VELOCITY_COMMAND_SOFT_LIMIT_MIN,
-            joint_config.VELOCITY_COMMAND_SOFT_LIMIT_MAX);
-
-        t_ff = std::clamp(
-            t_ff, 
-            joint_config.EFFORT_COMMAND_SOFT_LIMIT_MIN,
-            joint_config.EFFORT_COMMAND_SOFT_LIMIT_MAX);
 
         /// convert floats to unsigned ints ///
         uint16_t p_int = float_to_uint(
