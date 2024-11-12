@@ -50,7 +50,7 @@ namespace cubemars_hardware_interface
             conf.can_id = stoi(joint.parameters["can_id"]);
             conf.KD = stod(joint.parameters["kd"]);
             conf.KP = stod(joint.parameters["kp"]);
-            conf.KP_MIN = stod(joint.parameters["kd_min"]);
+            conf.KD_MIN = stod(joint.parameters["kd_min"]);
             conf.KD_MAX = stod(joint.parameters["kd_max"]);
             conf.KP_MIN = stod(joint.parameters["kp_min"]);
             conf.KP_MAX = stod(joint.parameters["kp_max"]);
@@ -582,6 +582,8 @@ namespace cubemars_hardware_interface
         t_ff = fminf(
                     fmaxf(joint_config.I_MIN, t_ff), 
                     joint_config.I_MAX);
+
+    
 
         /// convert floats to unsigned ints ///
         uint16_t p_int = float_to_uint(
