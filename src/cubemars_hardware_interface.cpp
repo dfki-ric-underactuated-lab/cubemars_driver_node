@@ -423,22 +423,31 @@ namespace cubemars_hardware_interface
             rclcpp::get_logger("CubemarsHardwareInterface"), 
             "Preparing mode switch...");
 
-        std::vector<cubemars::JointMode> new_modes = {};
+        std::vector<cubemars::JointMode> new_modes(info_.joints.size(), 
+                                                   cubemars::JointMode::UNDEFINED);
         for (std::string key : start_interfaces)
         {
+
             for (std::size_t i = 0; i < info_.joints.size(); i++)
             {
+
                 if (key == info_.joints[i].name + "/" + hw::HW_IF_POSITION)
                 {
-                    new_modes.push_back(cubemars::JointMode::POSITION);
+                    new_modes[i] == cubemars::JointMode::POSITION;
                 }
-                if (key == info_.joints[i].name + "/" + hw::HW_IF_VELOCITY)
+                else if (key == info_.joints[i].name + "/" + hw::HW_IF_VELOCITY)
                 {
-                    new_modes.push_back(cubemars::JointMode::VELOCITY);
+                    // only set velocity if position interface is not used
+                    if (new_modes[i] != cubemars::JointMode::POSITION){
+                        new_modes[i] == cubemars::JointMode::VELOCITY;
+                    }
                 }
-                if (key == info_.joints[i].name + "/" + hw::HW_IF_EFFORT)
+                else if (key == info_.joints[i].name + "/" + hw::HW_IF_EFFORT)
                 {
-                    new_modes.push_back(cubemars::JointMode::EFFORT);
+                    // only use effort mode if no other interface is used
+                    if (new_modes[i] == cubemars::JointMode::UNDEFINED){
+                        new_modes[i] = cubemars::JointMode::EFFORT;
+                    }
                 }
             }
         }
@@ -448,7 +457,6 @@ namespace cubemars_hardware_interface
             return hw::return_type::ERROR;
         }
 
-        // Stop motion on all relevant joints that are stopping
         for (std::string key : stop_interfaces)
         {
             for (std::size_t i = 0; i < info_.joints.size(); i++)
@@ -462,16 +470,9 @@ namespace cubemars_hardware_interface
                 }
             }
         }
-        // Set the new command modes
-        for (std::size_t i = 0; i < info_.joints.size(); i++)
-        {
-            if (hw_control_level_[i] != cubemars::JointMode::UNDEFINED)
-            {
-                // Something else is using the joint! Abort!
-                return hw::return_type::ERROR;
-            }
-            hw_control_level_[i] = new_modes[i];
-        }
+
+        hw_control_level_ = new_modes;
+
         return hw::return_type::OK;
     }
 
