@@ -436,7 +436,7 @@ namespace cubemars_hardware_interface
             auto it = std::find_if(info_.joints.begin(), info_.joints.end(), 
                            [&name](hw::ComponentInfo item) { return item.name == name; });
 
-            if (it != info_.joints.end()) {
+            if (it == info_.joints.end()) {
                 RCLCPP_ERROR(
                     rclcpp::get_logger("CubemarsHardwareInterface"), 
                     "Failed to prepare command mode switch. Unknown joint name: %s for interface %s",
