@@ -14,6 +14,7 @@ before_script:
 
 Build:
   stage: build
+  retry: 3
   script:
     - source /opt/ros/$ROS_DISTRO/setup.bash
     - mkdir -p build/src
@@ -29,6 +30,7 @@ Build:
 
 Test:
   stage: test
+  retry: 3
   script:
     - cd build
     - source ${CI_PROJECT_DIR}/build/install/setup.bash
