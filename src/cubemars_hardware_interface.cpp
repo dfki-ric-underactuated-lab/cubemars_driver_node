@@ -450,7 +450,7 @@ namespace cubemars_hardware_interface
                 new_modes[index] = cubemars::JointMode::POSITION;
             } else if (mode == hw::HW_IF_VELOCITY){
                 // only set velocity if position interface is not used
-                if (new_modes[index] == cubemars::JointMode::POSITION){
+                if (new_modes[index] != cubemars::JointMode::POSITION){
                     new_modes[index] = cubemars::JointMode::VELOCITY;
                 }
 
