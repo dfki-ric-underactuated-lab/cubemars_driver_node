@@ -34,7 +34,7 @@
         <param name="initial_value">${kp}</param>
       </command_interface>
       <command_interface name="derivative">
-        <param name="initial_value">${kp}</param>
+        <param name="initial_value">${kd}</param>
       </command_interface>
 
       <state_interface name="position"/>
