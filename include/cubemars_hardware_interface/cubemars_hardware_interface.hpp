@@ -83,6 +83,8 @@ namespace cubemars_hardware_interface
         int can_socket_fd_;
         int enable_loopback_;
         bool set_zero_pos_on_startup_;
+        int counter_;
+        rclcpp::Time start_time_;
 
         hardware_interface::CallbackReturn setup_socket();
 
@@ -98,7 +100,9 @@ namespace cubemars_hardware_interface
         std::vector<double> hw_commands_position_;
         std::vector<double> hw_commands_velocity_;
         std::vector<double> hw_commands_effort_;
-
+        std::vector<double> hw_commands_kp_;
+        std::vector<double> hw_commands_kd_;
+        
         std::vector<double> hw_states_position_;
         std::vector<double> hw_states_velocity_;
         std::vector<double> hw_states_effort_;
@@ -110,7 +114,9 @@ namespace cubemars_hardware_interface
             can_frame *frame, 
             float p_des, 
             float v_des, 
-            float t_ff, 
+            float t_ff,
+            float kp,
+            float kd,
             cubemars::joint_config_t joint_config, 
             cubemars::JointMode control_mode);
 

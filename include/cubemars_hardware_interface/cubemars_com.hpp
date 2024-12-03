@@ -106,8 +106,6 @@ namespace cubemars
     {
         canid_t can_id = 0;
         std::string name = "";
-        double KP = std::numeric_limits<double>::quiet_NaN();
-        double KD = std::numeric_limits<double>::quiet_NaN();
         double P_MIN = std::numeric_limits<double>::quiet_NaN();
         double P_MAX = std::numeric_limits<double>::quiet_NaN();
         double V_MIN = std::numeric_limits<double>::quiet_NaN();

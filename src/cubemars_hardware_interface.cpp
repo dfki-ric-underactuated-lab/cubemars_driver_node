@@ -48,8 +48,6 @@ namespace cubemars_hardware_interface
             cubemars::joint_config_t conf;
             conf.name = joint.name;
             conf.can_id = stoi(joint.parameters["can_id"]);
-            conf.KD = stod(joint.parameters["kd"]);
-            conf.KP = stod(joint.parameters["kp"]);
             conf.KD_MIN = stod(joint.parameters["kd_min"]);
             conf.KD_MAX = stod(joint.parameters["kd_max"]);
             conf.KP_MIN = stod(joint.parameters["kp_min"]);
@@ -90,6 +88,12 @@ namespace cubemars_hardware_interface
             info_.joints.size(), 
             std::numeric_limits<double>::quiet_NaN());
         hw_commands_effort_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_commands_kp_.resize(
+            info_.joints.size(), 
+            std::numeric_limits<double>::quiet_NaN());
+        hw_commands_kd_.resize(
             info_.joints.size(), 
             std::numeric_limits<double>::quiet_NaN());
         hw_states_position_.resize(
@@ -203,13 +207,63 @@ namespace cubemars_hardware_interface
         if ((ret_val = setup_socket()) != hw::CallbackReturn::SUCCESS){
             return ret_val;
         }
-
-
         for (uint i = 0; i < hw_commands_position_.size(); i++)
         {
             hw_commands_position_[i] = 0;
             hw_commands_velocity_[i] = 0;
             hw_commands_effort_[i] = 0;
+            hw_commands_kp_[i] = 0;
+            hw_commands_kd_[i] = 0;
+        }
+
+        for (uint i = 0; i < hw_commands_position_.size(); i++)
+        {
+            for (const auto &command_interface : info_.joints[i].command_interfaces)
+            {
+                if (command_interface.name == hw::HW_IF_POSITION)
+                {
+                    if (!command_interface.initial_value.empty()){
+                        hw_commands_position_[i] = stod(command_interface.initial_value);
+                    }
+                }
+                else if (command_interface.name == hw::HW_IF_VELOCITY)
+                {
+                    if (!command_interface.initial_value.empty()){
+                        hw_commands_velocity_[i] = stod(command_interface.initial_value);
+                    }
+                }
+                else if (command_interface.name == hw::HW_IF_EFFORT)
+                {
+                    if (!command_interface.initial_value.empty()){
+                        hw_commands_effort_[i] = stod(command_interface.initial_value);
+                    }
+                }
+                else if (command_interface.name == hw::HW_IF_PROPORTIONAL_GAIN)
+                {
+                    if (!command_interface.initial_value.empty()){
+                        hw_commands_kp_[i] = stod(command_interface.initial_value);
+                    }
+                }
+                else if (command_interface.name == hw::HW_IF_DERIVATIVE_GAIN)
+                {
+                    if (!command_interface.initial_value.empty()){
+                        hw_commands_kd_[i] = stod(command_interface.initial_value);
+                    }
+                }
+
+            }
+
+            RCLCPP_DEBUG(
+                rclcpp::get_logger("CubemarsHardwareInterface"), 
+                "%s initial command position : %f velocity: %f effort: %f kp: %f kd: %f",
+                info_.joints[i].name.c_str(), 
+                hw_commands_position_[i],
+                hw_commands_velocity_[i],
+                hw_commands_effort_[i],
+                hw_commands_kp_[i],
+                hw_commands_kd_[i]
+                );
+            
             hw_states_position_[i] = 0;
             hw_states_velocity_[i] = 0;
             hw_states_effort_[i] = 0;
@@ -255,6 +309,8 @@ namespace cubemars_hardware_interface
         RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
                     "All joints successfully activated!");
 
+        counter_ = 0;
+        start_time_ = rclcpp::Clock(RCL_ROS_TIME).now();
         return hw::CallbackReturn::SUCCESS;
     }
 
@@ -314,9 +370,19 @@ namespace cubemars_hardware_interface
     }
 
     hw::return_type CubemarsHardwareInterface::write(
-        const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
+        const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
     {
         struct can_frame frame;
+        
+        counter_ += 1;
+        if (time - start_time_ > rclcpp::Duration::from_seconds(1) ){
+            RCLCPP_DEBUG(
+                rclcpp::get_logger("CubemarsHardwareInterface"),
+                "Streaming at ~'%f'Hz", 
+                counter_ / (time - start_time_).seconds());
+            counter_ = 0;
+            start_time_ = time;
+        }
 
         for (uint i : sorted_idx_)
         {
@@ -326,6 +392,8 @@ namespace cubemars_hardware_interface
                 hw_commands_position_[i],
                 hw_commands_velocity_[i],
                 hw_commands_effort_[i],
+                hw_commands_kp_[i],
+                hw_commands_kd_[i],
                 hw_joint_configs_[i],
                 hw_control_level_[i]);
 
@@ -410,6 +478,14 @@ namespace cubemars_hardware_interface
                 info_.joints[i].name, 
                 hw::HW_IF_EFFORT, 
                 &hw_commands_effort_[i]));
+            command_interfaces.emplace_back(hw::CommandInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_PROPORTIONAL_GAIN, 
+                &hw_commands_kp_[i]));
+            command_interfaces.emplace_back(hw::CommandInterface(
+                info_.joints[i].name, 
+                hw::HW_IF_DERIVATIVE_GAIN, 
+                &hw_commands_kd_[i]));
         }
 
         return command_interfaces;
@@ -459,6 +535,10 @@ namespace cubemars_hardware_interface
                 if (new_modes[index] == cubemars::JointMode::UNDEFINED){
                     new_modes[index] = cubemars::JointMode::EFFORT;
                 }
+            } else if (mode == hw::HW_IF_PROPORTIONAL_GAIN){
+                // do nothing for now
+            } else if (mode == hw::HW_IF_DERIVATIVE_GAIN){
+                // do nothing for now
             } else {
                 RCLCPP_ERROR(
                     rclcpp::get_logger("CubemarsHardwareInterface"), 
@@ -555,6 +635,8 @@ namespace cubemars_hardware_interface
         float p_des,
         float v_des,
         float t_ff,
+        float kp,
+        float kd,
         cubemars::joint_config_t joint_config,
         cubemars::JointMode control_mode)
     {
@@ -564,23 +646,26 @@ namespace cubemars_hardware_interface
             t_ff *= -1;
         }
 
-        double kp = 0;
-        double kd = 0;
         if (control_mode == cubemars::JointMode::POSITION)
         {
             kp = fminf(
-                    fmaxf(joint_config.KP_MIN, joint_config.KP), 
+                    fmaxf(joint_config.KP_MIN, kp), 
                     joint_config.KP_MAX);
 
             kd = fminf(
-                    fmaxf(joint_config.KD_MIN, joint_config.KD), 
+                    fmaxf(joint_config.KD_MIN, kd), 
                     joint_config.KD_MAX);
         }
         else if (control_mode == cubemars::JointMode::VELOCITY)
         {
+            kp = 0;
             kd = fminf(
-                    fmaxf(joint_config.KD_MIN, joint_config.KD), 
+                    fmaxf(joint_config.KD_MIN, kd), 
                     joint_config.KD_MAX);
+        }
+        else {
+            kp=0;
+            kd=0;
         }
 
         /// limit data to be within bounds ///
