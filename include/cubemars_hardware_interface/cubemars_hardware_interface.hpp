@@ -83,6 +83,8 @@ namespace cubemars_hardware_interface
         int can_socket_fd_;
         int enable_loopback_;
         bool set_zero_pos_on_startup_;
+        int counter_;
+        rclcpp::Time start_time_;
 
         hardware_interface::CallbackReturn setup_socket();
 

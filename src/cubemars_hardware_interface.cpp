@@ -220,10 +220,6 @@ namespace cubemars_hardware_interface
         {
             for (const auto &command_interface : info_.joints[i].command_interfaces)
             {
-
-                RCLCPP_INFO(
-                    rclcpp::get_logger("CubemarsHardwareInterface"), 
-                    "Command  %s: %s", command_interface.name.c_str(), command_interface.initial_value.c_str());
                 if (command_interface.name == hw::HW_IF_POSITION)
                 {
                     if (!command_interface.initial_value.empty()){
@@ -257,7 +253,7 @@ namespace cubemars_hardware_interface
 
             }
 
-            RCLCPP_INFO(
+            RCLCPP_DEBUG(
                 rclcpp::get_logger("CubemarsHardwareInterface"), 
                 "%s initial command position : %f velocity: %f effort: %f kp: %f kd: %f",
                 info_.joints[i].name.c_str(), 
@@ -313,6 +309,8 @@ namespace cubemars_hardware_interface
         RCLCPP_INFO(rclcpp::get_logger("CubemarsHardwareInterface"), 
                     "All joints successfully activated!");
 
+        counter_ = 0;
+        start_time_ = rclcpp::Clock(RCL_ROS_TIME).now();
         return hw::CallbackReturn::SUCCESS;
     }
 
@@ -372,9 +370,19 @@ namespace cubemars_hardware_interface
     }
 
     hw::return_type CubemarsHardwareInterface::write(
-        const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
+        const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
     {
         struct can_frame frame;
+        
+        counter_ += 1;
+        if (time - start_time_ > rclcpp::Duration::from_seconds(1) ){
+            RCLCPP_DEBUG(
+                rclcpp::get_logger("CubemarsHardwareInterface"),
+                "Streaming at ~'%f'Hz", 
+                counter_ / (time - start_time_).seconds());
+            counter_ = 0;
+            start_time_ = time;
+        }
 
         for (uint i : sorted_idx_)
         {
@@ -527,6 +535,10 @@ namespace cubemars_hardware_interface
                 if (new_modes[index] == cubemars::JointMode::UNDEFINED){
                     new_modes[index] = cubemars::JointMode::EFFORT;
                 }
+            } else if (mode == hw::HW_IF_PROPORTIONAL_GAIN){
+                // do nothing for now
+            } else if (mode == hw::HW_IF_DERIVATIVE_GAIN){
+                // do nothing for now
             } else {
                 RCLCPP_ERROR(
                     rclcpp::get_logger("CubemarsHardwareInterface"), 
