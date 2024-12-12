@@ -513,11 +513,10 @@ namespace cubemars_hardware_interface
                            [&name](hw::ComponentInfo item) { return item.name == name; });
 
             if (it == info_.joints.end()) {
-                RCLCPP_ERROR(
-                    rclcpp::get_logger("CubemarsHardwareInterface"), 
-                    "Failed to prepare command mode switch. Unknown joint name: %s for interface %s",
-                    name.c_str(), key.c_str());
-                return hw::return_type::ERROR;
+                // start_interfaces and stop_interfaces of different hardware interfaces might
+                // also be included. Just skip if the interfaced joint is not managed by this 
+                // interface
+                continue;
             }
 
             size_t index = std::distance(info_.joints.begin(), it);
