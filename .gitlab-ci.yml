@@ -1,7 +1,7 @@
 variables:
   ROS_DISTRO: jazzy
 
-image: osrf/ros:$ROS_DISTRO-simulation
+image: ros:${ROS_DISTRO}-ros-base
 
 stages:
   - build
@@ -11,38 +11,44 @@ before_script:
   - git config --global user.name "Gitlab Runner"
   - git config --global user.email "<>"
   - apt-get update
+  - source /opt/ros/${ROS_DISTRO}/setup.bash
+  - rosdep update --rosdistro $ROS_DISTRO
+  - rosdep install --from-path . --rosdistro $ROS_DISTRO --default-yes 
 
 Build:
   stage: build
   retry: 2
   script:
-    - source /opt/ros/$ROS_DISTRO/setup.bash
-    - mkdir -p build/src
-    - cd build
-    - git clone --local .. src/${CI_PROJECT_NAME}
-    - rosdep update --rosdistro $ROS_DISTRO
-    - rosdep install --from-path src --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=build 
-    - colcon build --packages-up-to ${CI_PROJECT_NAME} --cmake-args -DBUILD_TESTING=ON --event-handlers console_direct+ summary+ status-
+    - colcon build 
+      --packages-up-to ${CI_PROJECT_NAME} 
+      --symlink-install 
+      --mixin coverage-gcc build-testing-on
+      --event-handlers console_direct+ summary+ status- 
+                   
   artifacts:
     paths:
-      - 'build'
+      - 'build/'
+      - 'install/'
     expire_in: 4 hrs
 
 Test:
   stage: test
-  retry: 2
   script:
-    - cd build
-    - source ${CI_PROJECT_DIR}/build/install/setup.bash
-    - rosdep install --from-path . --rosdistro $ROS_DISTRO -y --skip-keys="gazebo rviz joint_state_publisher_gui" --dependency-types=test --dependency-types=exec
+    - apt-get install lcov python3-colcon-lcov-result gcovr -y
+    - source install/setup.bash
     - colcon test --packages-select ${CI_PROJECT_NAME} 
-    - colcon test-result --all --verbose
+    - colcon test-result
+    - gcovr --txt build/coverage.txt --xml-pretty -o build/cobertura-coverage.xml --exclude-unreachable-branches --print-summary --root ${CI_PROJECT_DIR} -e build/${CI_PROJECT_NAME}/CMakeFiles
+    - cat build/coverage.txt     
   needs: 
     - job: Build
       artifacts: true
+  coverage: '/^TOTAL.*\s+(\d+\%)$/'
   artifacts:
     when: always
     reports:
-      junit: build/build/cubemars_hardware_interface/test_results/cubemars_hardware_interface/test_cubemars_hardware_interface.gtest.xml
-
+      junit: build/${CI_PROJECT_NAME}/test_results/${CI_PROJECT_NAME}/*.gtest.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: build/cobertura-coverage.xml
   
