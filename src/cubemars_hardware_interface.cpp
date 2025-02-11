@@ -666,6 +666,15 @@ namespace cubemars_hardware_interface
             kp=0;
             kd=0;
         }
+        if (control_mode == cubemars::JointMode::UNDEFINED)
+        {
+            RCLCPP_WARN_THROTTLE(
+                rclcpp::get_logger("CubemarsHardwareInterface"), 
+                *get_clock(), 
+                500, 
+                "Joint mode undefined for %s. Setting kp and kd to 0!", 
+                joint_config.name.c_str());
+        }
 
         /// limit data to be within bounds ///
         p_des = fminf(
