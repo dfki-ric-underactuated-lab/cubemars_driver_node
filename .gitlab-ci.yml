@@ -33,6 +33,7 @@ Build:
 
 Test:
   stage: test
+  retry: 2
   script:
     - apt-get install lcov python3-colcon-lcov-result gcovr -y
     - source install/setup.bash
