@@ -8,6 +8,7 @@
 
 #include <linux/can.h>
 #include <limits>
+#include <map>
 
 namespace cubemars
 {
@@ -119,9 +120,34 @@ namespace cubemars
         bool invert = false;
     };
 
+    // For MIT mode
     static const std::array<uint8_t, 8> START_MOTOR_CONTROL_MODE = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
     static const std::array<uint8_t, 8> EXIT_MOTOR_CONTROL_MODE = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD};
     static const std::array<uint8_t, 8> SET_ZERO_POSITION = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
+
+
+    struct joint_cmd_t
+    {
+        float pos;
+        float vel;
+        float torque;
+        float kp;
+        float kd;
+    };
+
+    struct joint_state_t 
+    {
+        float pos;
+        float vel;
+        float torque;
+        float temp;
+        ErrorCode status;
+    };
+
+    static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={{
+        "AK10-9", {0,"",-12.5, 12.5, -50.0, 50.0, -65.0, 65.0, 0, 500, 0, 5,false}},
+        {"AK80-6", {0,"",-12.5, 12.5, -76.0, 76.0, -12.0, 12.0, 0, 500, 0, 5,false}}
+    };
 
 } // namespace cubemars
 

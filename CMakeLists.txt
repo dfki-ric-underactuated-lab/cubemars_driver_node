@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.8)
 project(cubemars_hardware_interface)
 
+
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -12,6 +18,8 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp
   rclcpp_lifecycle
 )
+find_package(robot_control_msgs REQUIRED)
+
 
 # # Specify the required version of ros2_control
 # find_package(controller_manager 4.0.0)
@@ -55,12 +63,34 @@ install(
   DESTINATION include/${PROJECT_NAME}
 )
 
-install(TARGETS ${PROJECT_NAME}
+
+# add node
+add_executable(cubemars_hardware_node 
+  src/cubemars_can.cpp
+  src/cubemars_hardware_node.cpp
+)
+
+set_property(TARGET cubemars_hardware_node PROPERTY CXX_STANDARD 23)
+target_compile_options(cubemars_hardware_node PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_include_directories(cubemars_hardware_node PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+)
+ament_target_dependencies(
+  cubemars_hardware_node PUBLIC
+  rclcpp
+  rclcpp_lifecycle
+  robot_control_msgs
+)
+
+install(TARGETS ${PROJECT_NAME} cubemars_hardware_node
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
+  DESTINATION lib/${PROJECT_NAME}
 )
+
 
 if(BUILD_TESTING)
   # find_package(ament_lint_auto REQUIRED)
