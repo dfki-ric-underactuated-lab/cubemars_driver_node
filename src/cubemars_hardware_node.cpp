@@ -124,7 +124,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 this->get_parameter("can_socket_timeout_usec").as_int(),
                 true);
         }
-        
 
         // Goes to default callback group
         publish_timer_ = this->create_timer(frequency_, std::bind(&CubeMarsHardwareNode::joint_state_publish_callback, this));
@@ -396,10 +395,13 @@ void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg:
 void CubeMarsHardwareNode::joint_state_publish_callback()
 {
     joint_state_msg_mutex_.lock();
-    joint_state_pub_->publish(joint_state_msg_); // TODO: check if this blocks and maybe avoid block during mutex
-    joint_temp_pub_->publish(joint_temp_msg_);
-    can_interface_frequency_pub_->publish(can_interface_frequency_msg_);
+    joint_state_msg_to_pub_ = joint_state_msg_;
+    joint_temp_msg_to_pub_ = joint_temp_msg_;
+    can_interface_frequency_msg_to_pub_ = can_interface_frequency_msg_;
     joint_state_msg_mutex_.unlock();
+    joint_state_pub_->publish(joint_state_msg_to_pub_); // TODO: check if this blocks and maybe avoid block during mutex
+    joint_temp_pub_->publish(joint_temp_msg_to_pub_);
+    can_interface_frequency_pub_->publish(can_interface_frequency_msg_to_pub_);
 }
 
 void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
@@ -410,10 +412,16 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     auto &msg_idxs = msg_idxs_per_can_interface_[can_interface_idx];
     auto &friction_parameters = friction_parameters_per_can_interface_[can_interface_idx];
 
+    // Calculate timings
+    auto current_time = this->get_clock()->now();
+    double can_cyle_frequency = (1000000000. / (current_time - last_can_cycle_times_[can_interface_idx]).nanoseconds());
+    last_can_cycle_times_[can_interface_idx] = current_time;
+
     // Collect data
-    joint_cmd_msg_mutex_.lock();
-    if(can_cycle_timers_per_can_interface_.size() == 0){
-        joint_cmd_msg_mutex_.unlock();
+    joint_cmd_msg_mutex_.lock_shared();
+    if (can_cycle_timers_per_can_interface_.size() == 0)
+    {
+        joint_cmd_msg_mutex_.unlock_shared();
         return; // If unconfigured in the meantime
     }
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
@@ -424,7 +432,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_cmds[i].vel = joint_cmd_msg_.velocity[msg_idxs[i]];
         joint_cmds[i].torque = joint_cmd_msg_.effort[msg_idxs[i]];
     }
-    joint_cmd_msg_mutex_.unlock();
+    joint_cmd_msg_mutex_.unlock_shared();
 
     // Calculate torque compensation
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
@@ -438,8 +446,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     try
     {
         can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states);
-    }catch(const std::exception & e){
+    }
+    catch (const std::exception &e)
+    {
         RCLCPP_ERROR(this->get_logger(), "%s", e.what());
+        RCLCPP_ERROR(this->get_logger(), "For safety reasons deactivating into damping");
+        deactivate();
+        RCLCPP_ERROR(this->get_logger(), "For safety reasons disable motors into uncofnigured");
+        cleanup();
     }
     // Check status
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
@@ -451,15 +465,11 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
     }
 
-    // Calculate timings
-    auto current_time = this->get_clock()->now();
-    double can_cyle_frequency = (1000000000. / (current_time - last_can_cycle_times_[can_interface_idx]).nanoseconds());
-    last_can_cycle_times_[can_interface_idx] = current_time;
-
     // Write back state
-    joint_state_msg_mutex_.lock();
-    if(can_cycle_timers_per_can_interface_.size() == 0){
-        joint_state_msg_mutex_.unlock();
+    joint_state_msg_mutex_.lock_shared();
+    if (can_cycle_timers_per_can_interface_.size() == 0)
+    {
+        joint_state_msg_mutex_.unlock_shared();
         return; // If unconfigured in the meantime
     }
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
@@ -470,14 +480,20 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_temp_msg_.data[msg_idxs[i]] = joint_states[i].temp;
     }
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
-    joint_state_msg_mutex_.unlock();
+    joint_state_msg_mutex_.unlock_shared();
 }
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
+    sched_param sch;
+    sch.sched_priority = 80;
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch) != 0) {
+        RCLCPP_WARN(rclcpp::get_logger("PrioritySetter"), "Failed to set thread priority");
+    }
     auto node = std::make_shared<CubeMarsHardwareNode>();
     rclcpp::executors::MultiThreadedExecutor executor; // TODO: specify more threads
+    RCLCPP_INFO(node->get_logger(), "Node is running on %li threads", executor.get_number_of_threads());
     executor.add_node(node->get_node_base_interface());
     executor.spin(); // Call back because of CTRL_C brings us over this
     node->on_shutdown(node->get_current_state());

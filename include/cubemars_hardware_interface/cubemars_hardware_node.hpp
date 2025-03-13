@@ -9,7 +9,7 @@
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <mutex>
 #include <semaphore>
-
+#include <shared_mutex>
 
 using namespace rclcpp_lifecycle::node_interfaces;
 
@@ -37,8 +37,11 @@ private:
     robot_control_msgs::msg::JointState joint_state_msg_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
-    std::mutex joint_cmd_msg_mutex_;
-    std::mutex joint_state_msg_mutex_;
+    robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
+    std::shared_mutex joint_cmd_msg_mutex_;
+    std::shared_mutex joint_state_msg_mutex_;
     
 
     double default_damping_KD_;
