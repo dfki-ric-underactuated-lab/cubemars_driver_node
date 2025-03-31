@@ -59,7 +59,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 RCLCPP_ERROR(this->get_logger(), "Joint %s has negative msg_idx %li", joint_names[i].c_str(), msg_idx);
                 return LifecycleNodeInterface::CallbackReturn::FAILURE;
             }
-            if(msg_idx > max_msg_idx){
+            if (msg_idx > max_msg_idx)
+            {
                 max_msg_idx = msg_idx;
             }
             auto can_id = this->get_parameter("joint_defintions." + joint_names[i] + ".can_id").as_int();
@@ -457,8 +458,11 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     catch (const std::exception &e)
     {
         RCLCPP_ERROR(this->get_logger(), "%s", e.what());
-        RCLCPP_ERROR(this->get_logger(), "For safety reasons deactivating into damping");
-        deactivate();
+        if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+        {
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons deactivating into damping");
+            deactivate();
+        }
         RCLCPP_ERROR(this->get_logger(), "For safety reasons disable motors into uncofnigured");
         cleanup();
     }
@@ -495,7 +499,8 @@ int main(int argc, char **argv)
     rclcpp::init(argc, argv);
     sched_param sch;
     sch.sched_priority = 80;
-    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch) != 0) {
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch) != 0)
+    {
         RCLCPP_WARN(rclcpp::get_logger("PrioritySetter"), "Failed to set thread priority");
     }
     auto node = std::make_shared<CubeMarsHardwareNode>();
