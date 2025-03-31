@@ -242,7 +242,7 @@ void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id)
 {
     if (joint_id >= joint_configs_.size())
     {
-        throw std::range_error("joint_id has to be one of the indeces of specified joints");
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
     }
     if (set_zero_postion_on_enable_)
     {
@@ -255,7 +255,7 @@ void cubemars::CubemarsCan::end_motor_control_mode(unsigned int joint_id)
 {
     if (joint_id >= joint_configs_.size())
     {
-        throw std::range_error("joint_id has to be one of the indeces of specified joints");
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
     }
     send_control_frame(joint_configs_[joint_id].can_id, cubemars::EXIT_MOTOR_CONTROL_MODE);
 }
