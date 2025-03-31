@@ -57,6 +57,7 @@ private:
     std::vector<rclcpp::TimerBase::SharedPtr> can_cycle_timers_per_can_interface_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
+    std::vector<std::vector<std::string>> joint_names_per_can_interface_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
 
     template <typename T>

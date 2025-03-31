@@ -77,6 +77,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_commands_per_can_interface_.resize(num_can_interfaces);
         friction_parameters_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
+        joint_names_per_can_interface_.resize(num_can_interfaces);
         can_interfaces_.resize(num_can_interfaces);
         last_can_cycle_times_.resize(num_can_interfaces, this->get_clock()->now());
         for (unsigned int i = 0; i < num_can_interfaces; i++)
@@ -111,6 +112,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             msg_idxs_per_can_interface_[can_interface_id].push_back(msg_idx);
             friction_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double(),
                                                                                 this->get_parameter("joint_defintions." + joint_names[i] + ".cf").as_double()});
+            joint_names_per_can_interface_[can_interface_id].push_back(joint_names[i]);
         }
 
         // Now create can devices and callback
@@ -142,7 +144,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             catch (const std::exception &e)
             {
                 // Notidy users
-                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %i occured: %s", i, e.what());
+                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured: %s", can_interfaces_[i]->GetName().c_str(), e.what());
                 // This can only happen when actual motors are enabled, hence try to disable motors
                 try
                 {
@@ -155,7 +157,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 }
                 catch (const std::exception &e)
                 {
-                    RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %i during deactivation occured, be carefull with still active motors: %s", i, e.what());
+                    RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s during deactivation occured, be carefull with still active motors: %s", can_interfaces_[i]->GetName().c_str(), e.what());
                 }
                 return LifecycleNodeInterface::CallbackReturn::ERROR;
             }
@@ -207,7 +209,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
             }
             catch (std::exception &e)
             {
-                RCLCPP_ERROR(this->get_logger(), "Error when stopping motor %i on can interface %i (joint with msg_idx %i): %s", j, i, msg_idxs_per_can_interface_[i][j], e.what());
+                RCLCPP_ERROR(this->get_logger(), "Error when stopping motor %s on can interface %s (joint with msg_idx %i): %s", joint_names_per_can_interface_[i][j].c_str(), can_interfaces_[i]->GetName().c_str(), msg_idxs_per_can_interface_[i][j], e.what());
                 success = false;
             }
         }
@@ -244,6 +246,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_state_msg_.velocity.clear();
     joint_state_msg_.effort.clear();
     joint_temp_msg_.data.clear();
+    joint_names_per_can_interface_.clear();
     if (success)
     {
         return LifecycleNodeInterface::CallbackReturn::SUCCESS;
@@ -460,7 +463,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     {
         if (joint_states[i].status != cubemars::ErrorCode::FAULT_CODE_NONE)
         {
-            RCLCPP_ERROR(this->get_logger(), "Joint %i in can_interface %i (msg idx %i) has error %s - deactivating joints", i, can_interface_idx, msg_idxs[can_interface_idx], cubemars::errorFlagToString(joint_states[i].status));
+            RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s - deactivating joints", joint_names_per_can_interface_[can_interface_idx][i].c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), msg_idxs[can_interface_idx], cubemars::errorFlagToString(joint_states[i].status));
             deactivate();
         }
     }

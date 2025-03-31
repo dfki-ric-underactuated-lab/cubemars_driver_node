@@ -99,7 +99,7 @@ void cubemars::CubemarsCan::send_control_frame(const canid_t &can_id, const std:
     int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
     if (nbytes <= 0)
     {
-        throw cubemars::can_device_error(std::format("Did not receive reply from {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        throw cubemars::can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
     }
     if (recv_frame_.can_id != can_id)
     {
@@ -196,7 +196,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
         if (nbytes < 0)
         {
-            throw cubemars::can_device_error(std::format("Failed to read from can interface {} - {} ", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno))));
+            throw cubemars::can_device_error(std::format("Failed to read from can id {} on interface {} - {} ", std::to_string(joint_configs_[i].can_id), can_interface_ ,std::string(strerror(errno))));
         }
         if (recv_frame_.can_id == 0)
         {

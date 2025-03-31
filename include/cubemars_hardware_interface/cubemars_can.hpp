@@ -52,7 +52,10 @@ namespace cubemars
         void end_motor_control_mode();
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states);
-
+        
+        const std::string & GetName() {
+            return can_interface_;
+        }
         virtual ~CubemarsCan();
     private:
         std::string can_interface_;
