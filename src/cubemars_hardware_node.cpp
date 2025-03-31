@@ -34,6 +34,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_interface_frequency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_cycle_frequencies", QOS_BEST_EFFORT_NO_DEPTH);
 
         // For each joint create default parameters and  validat them them
+        unsigned int max_msg_idx = 0;
         for (unsigned int i = 0; i < joint_names.size(); i++)
         {
             // Declare joint definitions
@@ -57,6 +58,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             {
                 RCLCPP_ERROR(this->get_logger(), "Joint %s has negative msg_idx %li", joint_names[i].c_str(), msg_idx);
                 return LifecycleNodeInterface::CallbackReturn::FAILURE;
+            }
+            if(msg_idx > max_msg_idx){
+                max_msg_idx = msg_idx;
             }
             auto can_id = this->get_parameter("joint_defintions." + joint_names[i] + ".can_id").as_int();
             if (!can_id_per_interface[can_interface_name].insert(can_id).second)
@@ -87,15 +91,15 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_interface_frequency_msg_.data.resize(num_can_interfaces, 0.0);
 
         // Prepare messages
-        joint_cmd_msg_.effort.resize(num_joints_, 0.0);
-        joint_cmd_msg_.velocity.resize(num_joints_, 0.0);
-        joint_cmd_msg_.position.resize(num_joints_, 0.0);
-        joint_cmd_msg_.kd.resize(num_joints_, 0.0);
-        joint_cmd_msg_.kp.resize(num_joints_, 0.0);
-        joint_state_msg_.position.resize(num_joints_, 0.0);
-        joint_state_msg_.velocity.resize(num_joints_, 0.0);
-        joint_state_msg_.effort.resize(num_joints_, 0.0);
-        joint_temp_msg_.data.resize(num_joints_, 0.0);
+        joint_cmd_msg_.effort.resize(max_msg_idx + 1, 0.0);
+        joint_cmd_msg_.velocity.resize(max_msg_idx + 1, 0.0);
+        joint_cmd_msg_.position.resize(max_msg_idx + 1, 0.0);
+        joint_cmd_msg_.kd.resize(max_msg_idx + 1, 0.0);
+        joint_cmd_msg_.kp.resize(max_msg_idx + 1, 0.0);
+        joint_state_msg_.position.resize(max_msg_idx + 1, 0.0);
+        joint_state_msg_.velocity.resize(max_msg_idx + 1, 0.0);
+        joint_state_msg_.effort.resize(max_msg_idx + 1, 0.0);
+        joint_temp_msg_.data.resize(max_msg_idx + 1, 0.0);
 
         for (unsigned int i = 0; i < joint_names.size(); i++)
         {
