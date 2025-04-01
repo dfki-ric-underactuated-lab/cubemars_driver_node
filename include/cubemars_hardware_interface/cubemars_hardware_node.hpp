@@ -42,6 +42,7 @@ private:
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
     std::shared_mutex joint_cmd_msg_mutex_;
     std::shared_mutex joint_state_msg_mutex_;
+    std::shared_mutex can_communication_mutex_;
     
 
     double default_damping_KD_;

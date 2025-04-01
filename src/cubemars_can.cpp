@@ -186,7 +186,16 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         send_frame_.can_id = joint_configs_[i].can_id;
         if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
         {
-            throw cubemars::can_device_error("Failed to write can frame to can_id " + std::to_string(joint_configs_[i].can_id) + std::string(strerror(errno)));
+            // Before throwing the already send bytes have to also be received, otherwise later unknown package will be received
+            unsigned int more_fails = 0;
+            for (unsigned int oi = 0; oi < i; oi++)
+            {
+                if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+                {
+                    more_fails++;
+                }
+            }
+            throw cubemars::can_device_error(std::format("Failed to write can frame to can_id {} - {}. {} reads have failed afterwards ",  std::to_string(joint_configs_[i].can_id),  std::string(strerror(errno)), std::to_string(more_fails)));
         }
     }
     // Receive all commands
@@ -196,12 +205,31 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
         if (nbytes < 0)
         {
-            throw cubemars::can_device_error(std::format("Failed to read from can id {} on interface {} - {} ", std::to_string(joint_configs_[i].can_id), can_interface_ ,std::string(strerror(errno))));
+            // Before throwing other missing frames have to by tried to receive
+            unsigned int more_fails = 0;
+            for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
+            {
+                if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+                {
+                    more_fails++;
+                }
+            }
+            throw cubemars::can_device_error(std::format("Failed to read from can id {} on interface {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), can_interface_, std::string(strerror(errno)), std::to_string(more_fails)));
         }
         if (recv_frame_.can_id == 0)
         {
             // TODO: (taken from MT) more sophisticated error handling here
-            throw cubemars::can_device_error(std::format("Wrong can id received during read from can interface {} - {} ", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno))));
+            // Before throwing other missing frames have to by tried to receive
+            unsigned int more_fails = 0;
+            for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
+            {
+                if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+                {
+                    more_fails++;
+                }
+            }
+
+            throw cubemars::can_device_error(std::format("Got unknown CAN-ID 0 instead of {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)), std::to_string(more_fails)));
         }
         // Lookup can_id
         auto it = std::find_if(
@@ -212,7 +240,16 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
 
         if (it == joint_configs_.end())
         {
-            throw cubemars::can_device_error("Received reply from unknown can device - " + recv_frame_.can_id);
+            // Before throwing other missing frames have to by tried to receive
+            unsigned int more_fails = 0;
+            for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
+            {
+                if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+                {
+                    more_fails++;
+                }
+            }
+            throw cubemars::can_device_error(std::format("Received reply from unknown can device with CAN_id {}. {} reads have failed afterwards ", std::to_string(recv_frame_.can_id), std::to_string(more_fails)));
         }
         unsigned int joint_index = it - joint_configs_.begin();
 
@@ -255,7 +292,7 @@ void cubemars::CubemarsCan::end_motor_control_mode(unsigned int joint_id)
 {
     if (joint_id >= joint_configs_.size())
     {
-        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints (highest joint id {})", std::to_string(joint_id), std::to_string(joint_configs_.size())));
     }
     send_control_frame(joint_configs_[joint_id].can_id, cubemars::EXIT_MOTOR_CONTROL_MODE);
 }

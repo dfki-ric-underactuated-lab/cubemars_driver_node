@@ -199,6 +199,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     can_cycle_timers_per_can_interface_.clear();
     can_cycle_callback_groups_.clear();
 
+    can_communication_mutex_.lock();
     joint_cmd_msg_mutex_.lock(); // Nobody can enter
     joint_state_msg_mutex_.lock();
     bool success = true;
@@ -242,6 +243,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     last_can_cycle_times_.clear();
     joint_cmd_msg_mutex_.unlock();
     joint_state_msg_mutex_.unlock();
+    can_communication_mutex_.unlock();
     joint_cmd_msg_.effort.clear();
     joint_cmd_msg_.velocity.clear();
     joint_cmd_msg_.position.clear();
@@ -451,12 +453,15 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
     }
     // Send an receive
+    can_communication_mutex_.lock_shared();
     try
     {
         can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states);
+        can_communication_mutex_.unlock_shared();
     }
     catch (const std::exception &e)
     {
+        can_communication_mutex_.unlock_shared();
         RCLCPP_ERROR(this->get_logger(), "%s", e.what());
         if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
         {
