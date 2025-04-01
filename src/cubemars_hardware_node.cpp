@@ -350,6 +350,11 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_state_msg_.velocity.clear();
         joint_state_msg_.effort.clear();
         joint_temp_msg_.data.clear();
+        friction_parameters_per_can_interface_.clear();
+        msg_idxs_per_can_interface_.clear();
+        joint_states_per_can_interface_.clear();
+        joint_commands_per_can_interface_.clear();
+        joint_names_per_can_interface_.clear();
         RCLCPP_INFO(this->get_logger(), "Handling error in PRIMARY_STATE_UNCONFIGURED sucessfull");
         break;
     case lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE:
