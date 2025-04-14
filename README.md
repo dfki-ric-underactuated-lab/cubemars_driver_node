@@ -1,38 +1,10 @@
-# CubeMars (TMotors) Hardware Interface for Ros2 Control 
-
-### Enable CAN interface
+# Enable CAN interface
 
 
 ``` bash
   ip link set can0 up type can bitrate 1000000
   ip link set can0 txqueuelen 1000
 ```
-
-### Example Xacro
-``` xml
-
-<?xml version="1.0"?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-
-  <xacro:include filename="$(find cubemars_hardware_interface)/ros2_control/cubemars.ros2_control.xacro" />
-
-  <ros2_control name="Example" type="system">
-    <hardware>
-      <plugin>cubemars_hardware_interface/CubemarsHardwareInterface</plugin>
-      <param name="can_interface">can0</param>
-    </hardware>
-
-    <xacro:AK80-9_V2 name="right_shoulder_joint0" can_id="12" kp="3." kd="1." prefix=""/>
-    <xacro:AK10-9 name="right_shoulder_joint1" can_id="11" kp="3." kd="1." prefix=""/>
-    <xacro:AK10-9 name="right_shoulder_joint2" can_id="23" kp="5." kd="5." prefix=""/>
-    <xacro:AK80-9_V2 name="right_elbow_joint"  can_id="14" kp="5." kd="5." prefix=""/>
-  </ros2_control>
-
-
-</robot>
-```
-
-
 Get serial number for CAN device (e.g. can0): `udevadm info -a -p $(udevadm info -q path -p /sys/class/net/can0)| grep serial| head -n 1`
 ### /etc/udev/rules.d/80-can.rules
 ```
@@ -51,3 +23,35 @@ Name=can*
 BitRate=1000K
 RestartSec=1000ms
 ```
+
+# Use CubeMars (TMotors) Ros 2 Lifecycle Node
+An example config can be found in [config/test_params.yaml]().
+
+Start the node with:
+
+```bash
+ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-file src/cubemars-driver-node/config/test_params.yaml`
+```
+It will start in **uncofigured**. The motors are not activated. It is not even communicating via CAN.
+Configure it with 
+```bash
+ros2 lifecycle set /cubermars_hardware_node configure
+```
+Now it is **configured**. The motors are enabled but only zeros are trasnmitted such that the motors are still not moving (not activate) 
+The `joint_states` are being published.
+Before the motors can be activated a valid `joint_commands` message has to be send, with a frequency higher than specified in the config. 
+Activate the motors with:
+```bash
+ros2 lifecycle set /cubermars_hardware_node activate
+```
+Now the driver is **active**, sending the `joint_commands` to the motors. Whenever n error occurs, no `joint_commands` are beeing received with the expected frequency or the user triggers with:
+``bash
+```bash
+ros2 lifecycle set /cubermars_hardware_node deactivate
+```
+The driver is again only **configured**. This time, as the motors have been activated before, the driver sends a damping command to the motors. You can either activate again with the command above, or clean up:
+```bash
+ros2 lifecycle set /cubermars_hardware_node cleanup
+```
+Now the driver is again **unconfigured**, means the motors are disabled and not CAN communication happends.
+
