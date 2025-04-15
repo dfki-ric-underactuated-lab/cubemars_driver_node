@@ -30,7 +30,7 @@ An example config can be found in [config/test_params.yaml]().
 Start the node with:
 
 ```bash
-ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-file src/cubemars-driver-node/config/test_params.yaml`
+ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-file src/cubemars_driver_node/config/test_params.yaml
 ```
 It will start in **uncofigured**. The motors are not activated. It is not even communicating via CAN.
 Configure it with 
@@ -44,7 +44,7 @@ Activate the motors with:
 ```bash
 ros2 lifecycle set /cubermars_hardware_node activate
 ```
-Now the driver is **active**, sending the `joint_commands` to the motors. Whenever n error occurs, no `joint_commands` are beeing received with the expected frequency or the user triggers with:
+Now the driver is **active**, sending the `joint_commands` to the motors. Whenever an error occurs, no `joint_commands` are being received with the expected frequency or the user triggers with:
 ``bash
 ```bash
 ros2 lifecycle set /cubermars_hardware_node deactivate
