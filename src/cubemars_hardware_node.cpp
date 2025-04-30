@@ -493,7 +493,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_state_msg_mutex_.unlock_shared();
         return; // If unconfigured in the meantime
     }
-    for (unsigned int i = 0; i < joint_cmds.size(); i++)
+    for (unsigned int i = 0; i < joint_states.size(); i++)
     {
         joint_state_msg_.position[msg_idxs[i]] = joint_states[i].pos;
         joint_state_msg_.velocity[msg_idxs[i]] = joint_states[i].vel;
