@@ -1,6 +1,6 @@
 #include "cubemars_hardware_interface/cubemars_hardware_node.hpp"
 
-CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("cubermars_hardware_node")
+CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("cubemars_hardware_node")
 {
 }
 

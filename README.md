@@ -35,23 +35,23 @@ ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-
 It will start in **uncofigured**. The motors are not activated. It is not even communicating via CAN.
 Configure it with 
 ```bash
-ros2 lifecycle set /cubermars_hardware_node configure
+ros2 lifecycle set /cubemars_hardware_node configure
 ```
 Now it is **configured**. The motors are enabled but only zeros are trasnmitted such that the motors are still not moving (not activate) 
 The `joint_states` are being published.
 Before the motors can be activated a valid `joint_commands` message has to be send, with a frequency higher than specified in the config. 
 Activate the motors with:
 ```bash
-ros2 lifecycle set /cubermars_hardware_node activate
+ros2 lifecycle set /cubemars_hardware_node activate
 ```
 Now the driver is **active**, sending the `joint_commands` to the motors. Whenever an error occurs, no `joint_commands` are being received with the expected frequency or the user triggers with:
 ``bash
 ```bash
-ros2 lifecycle set /cubermars_hardware_node deactivate
+ros2 lifecycle set /cubemars_hardware_node deactivate
 ```
 The driver is again only **configured**. This time, as the motors have been activated before, the driver sends a damping command to the motors. You can either activate again with the command above, or clean up:
 ```bash
-ros2 lifecycle set /cubermars_hardware_node cleanup
+ros2 lifecycle set /cubemars_hardware_node cleanup
 ```
 Now the driver is again **unconfigured**, means the motors are disabled and not CAN communication happends.
 
