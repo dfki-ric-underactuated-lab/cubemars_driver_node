@@ -45,6 +45,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".invert", false);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".b", 0.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".cf", 0.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".transmission_ratio", 1.0);
             // Validate joint defintions
             auto can_interface_name = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
             can_interfaces_names_.insert(can_interface_name);
@@ -71,6 +72,11 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             }
             auto motor_type = this->get_parameter("joint_defintions." + joint_names[i] + ".motor_type").as_string();
             motor_types.insert(motor_type);
+            auto transmission_ratio = this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double();
+            if(transmission_ratio <= 0){
+                RCLCPP_ERROR(this->get_logger(), "Transmissions should be > 0, but joint %s has transmission ratio %f", joint_names[i].c_str(), transmission_ratio);
+                return LifecycleNodeInterface::CallbackReturn::FAILURE;
+            }
         }
         num_joints_ = joint_names.size();
         // Create joint configs per can interfaces and create state and message mapping
@@ -81,6 +87,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         msg_idxs_per_can_interface_.resize(num_can_interfaces);
         joint_commands_per_can_interface_.resize(num_can_interfaces);
         friction_parameters_per_can_interface_.resize(num_can_interfaces);
+        transmission_ratios_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
         joint_names_per_can_interface_.resize(num_can_interfaces);
         can_interfaces_.resize(num_can_interfaces);
@@ -117,6 +124,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             msg_idxs_per_can_interface_[can_interface_id].push_back(msg_idx);
             friction_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double(),
                                                                                 this->get_parameter("joint_defintions." + joint_names[i] + ".cf").as_double()});
+            transmission_ratios_per_can_interface_[can_interface_id].push_back(this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double());                                                                                    
             joint_names_per_can_interface_[can_interface_id].push_back(joint_names[i]);
         }
 
@@ -232,6 +240,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
 
     friction_parameters_per_can_interface_.clear();
+    transmission_ratios_per_can_interface_.clear();
     msg_idxs_per_can_interface_.clear();
     joint_states_per_can_interface_.clear();
     joint_commands_per_can_interface_.clear();
@@ -351,6 +360,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_state_msg_.effort.clear();
         joint_temp_msg_.data.clear();
         friction_parameters_per_can_interface_.clear();
+        transmission_ratios_per_can_interface_.clear();
         msg_idxs_per_can_interface_.clear();
         joint_states_per_can_interface_.clear();
         joint_commands_per_can_interface_.clear();
@@ -426,6 +436,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     auto &joint_states = joint_states_per_can_interface_[can_interface_idx];
     auto &msg_idxs = msg_idxs_per_can_interface_[can_interface_idx];
     auto &friction_parameters = friction_parameters_per_can_interface_[can_interface_idx];
+    auto &transmissions = transmission_ratios_per_can_interface_[can_interface_idx];
 
     // Calculate timings
     auto current_time = this->get_clock()->now();
@@ -449,15 +460,23 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
     joint_cmd_msg_mutex_.unlock_shared();
 
-    // Calculate torque compensation
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
     {
+        // friction model
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
         {
             joint_cmds[i].torque += friction_parameters[i].b * joint_states[i].vel + friction_parameters[i].cf * atan(friction_compensation_sign_steepness_ * joint_states[i].vel);
         }
+        // transmission ratios
+        for (unsigned int i = 0; i < joint_cmds.size(); i++)
+        {
+            joint_cmds[i].pos    *= transmissions[i];
+            joint_cmds[i].vel    *= transmissions[i];
+            joint_cmds[i].torque *= 1.0/transmissions[i];
+        }
     }
-    // Send an receive
+
+    // Send and receive
     can_communication_mutex_.lock_shared();
     try
     {
@@ -473,7 +492,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             RCLCPP_ERROR(this->get_logger(), "For safety reasons deactivating into damping");
             deactivate();
         }
-        RCLCPP_ERROR(this->get_logger(), "For safety reasons disable motors into uncofnigured");
+        RCLCPP_ERROR(this->get_logger(), "For safety reasons disable motors into unconfigured");
         cleanup();
     }
     // Check status
@@ -484,6 +503,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s - deactivating joints", joint_names_per_can_interface_[can_interface_idx][i].c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), msg_idxs[can_interface_idx], cubemars::errorFlagToString(joint_states[i].status));
             deactivate();
         }
+    }
+
+    // Add transmission ratios to joint states
+    for (unsigned int i = 0; i < joint_states.size(); i++)
+    {
+        joint_states[i].pos    *= 1.0/transmissions[i];
+        joint_states[i].vel    *= 1.0/transmissions[i];
+        joint_states[i].torque *= transmissions[i];
     }
 
     // Write back state

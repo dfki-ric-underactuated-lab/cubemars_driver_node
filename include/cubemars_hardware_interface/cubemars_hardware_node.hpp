@@ -55,6 +55,7 @@ private:
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<unsigned int>> msg_idxs_per_can_interface_;
     std::vector<std::vector<friction_parameters>> friction_parameters_per_can_interface_;
+    std::vector<std::vector<double>> transmission_ratios_per_can_interface_;
     std::vector<rclcpp::TimerBase::SharedPtr> can_cycle_timers_per_can_interface_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
