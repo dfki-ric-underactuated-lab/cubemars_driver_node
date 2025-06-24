@@ -85,7 +85,7 @@ namespace cubemars
             else if (x > x_max)
                 x = x_max;
 
-            return (int)((x - x_min) * ((float)((1 << bits) / span)));
+            return (int)((x - x_min) * ((float)((1 << bits) -1))/ span);
         }
 
         /**
@@ -99,3 +99,4 @@ namespace cubemars
         }
     };
 }
+
