@@ -61,6 +61,8 @@ namespace cubemars
         std::string can_interface_;
         int enable_loopback_;
         std::vector<joint_config_t> joint_configs_;
+        std::vector<bool> send_ok_;
+        std::vector<bool> recv_ok_;
         bool set_zero_postion_on_enable_;
 
         int can_socket_fd_;

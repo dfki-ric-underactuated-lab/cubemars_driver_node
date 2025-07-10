@@ -10,6 +10,7 @@
 #include <mutex>
 #include <semaphore>
 #include <shared_mutex>
+#include <sensor_msgs/msg/joint_state.hpp>
 
 using namespace rclcpp_lifecycle::node_interfaces;
 
@@ -43,6 +44,10 @@ private:
     std::shared_mutex joint_cmd_msg_mutex_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
+    sensor_msgs::msg::JointState ros2_joint_state_msg_;
+    bool publish_ros2_joint_state_;
+    std::vector<double> joint_zero_positions_;
     
 
     double default_damping_KD_;

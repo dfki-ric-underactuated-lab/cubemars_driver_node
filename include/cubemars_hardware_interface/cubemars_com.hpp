@@ -142,6 +142,7 @@ namespace cubemars
         float torque;
         float temp;
         ErrorCode status;
+        bool com_ok;
     };
 
     static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={{

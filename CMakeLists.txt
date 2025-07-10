@@ -17,6 +17,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   pluginlib
   rclcpp
   rclcpp_lifecycle
+  sensor_msgs
 )
 find_package(robot_control_msgs REQUIRED)
 
@@ -81,6 +82,7 @@ ament_target_dependencies(
   rclcpp
   rclcpp_lifecycle
   robot_control_msgs
+  sensor_msgs
 )
 
 install(TARGETS ${PROJECT_NAME} cubemars_hardware_node

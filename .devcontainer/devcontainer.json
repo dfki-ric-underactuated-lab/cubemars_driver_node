@@ -1,0 +1,43 @@
+{
+	"name": "osrf/ros:jazzy-desktop-full",
+    "privileged": true,
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "runArgs": [
+        "--net=host",
+        "--pid=host",
+        "--ipc=host",
+        "-e", "DISPLAY=${env:DISPLAY}",
+        "--env=QT_X11_NO_MITSHM=1",
+        "--device=/dev:/dev",
+        "--device=/dev/input:/dev/input",
+        //"--device=/dev/ttyACM0:/dev/ttyACM0"
+    ],
+    "workspaceMount": "source=${localWorkspaceFolder},target=/root/ros_ws/src/${localWorkspaceFolderBasename},type=bind",
+    "workspaceFolder": "/root/ros_ws",
+	"containerEnv": {
+    	"DISPLAY": "unix:0",
+		"ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
+        "ROS_DOMAIN_ID": "42"
+    },
+    "mounts": [
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+        "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached"
+     ],
+    "customizations": {
+        "vscode": {
+            "settings": {},
+            "extensions": [
+                "mhutchie.git-graph",
+                // "eamodio.gitlens",
+                // "donjayamanne.githistory",
+                // "ms-python.vscode-pylance",
+                // "ms-python.python"
+				// "ms-vscode.cpptools",
+				// "ms-vscode.cpptools-extension-pack"
+              ]
+        }
+    },
+    "postCreateCommand": "colcon build"
+  }

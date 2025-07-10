@@ -6,6 +6,15 @@ cubemars_hardware_node:
     frequency: 1000
     friction_compensation_sign_steepness: 100.
     can_socket_timeout_usec: 100000
+    joint_zero_positions:
+      - -0.0
+      - -0.92
+      - -3.4
+      - -0.0
+      - -0.92
+      - -3.4
+
+    #joint_zero_positions: [0.,0.,0.,0.,0.,0.]
 
     joint_defintions:
       joint_ll_hip_1:
@@ -22,6 +31,7 @@ cubemars_hardware_node:
         can_id: 6
         motor_type: "AK10-9"
         cf: 0.22
+        invert: true
 
       joint_ll_knee:
         msg_idx: 2
@@ -45,7 +55,6 @@ cubemars_hardware_node:
         can_id: 3
         motor_type: "AK10-9"
         cf: 0.22
-        invert: true
 
       joint_rl_knee:
         msg_idx: 5
