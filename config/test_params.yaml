@@ -1,18 +1,20 @@
 cubemars_hardware_node:
   ros__parameters:
-    joints: ["joint_ll_hip_1", "joint_ll_hip_2", "joint_ll_knee", "joint_rl_hip_1", "joint_rl_hip_2", "joint_rl_knee"]
+    joints: ["joint_ll_hip_1","joint_ll_hip_2", "joint_ll_knee", "joint_rl_hip_1", "joint_rl_hip_2", "joint_rl_knee"]
     default_damping_KD: 1.0
-    watchdog_frequency: 10
+    watchdog_frequency: 100
     frequency: 1000
     friction_compensation_sign_steepness: 100.
     can_socket_timeout_usec: 100000
-    joint_zero_positions:
-      - -0.0
-      - -0.92
-      - -3.4
-      - -0.0
-      - -0.92
-      - -3.4
+    # joint_zero_positions: #Experimentally determined BY FRANEK
+    #   - 0.0
+    #   - -0.7
+    #   - -2.2
+    #   - -0.0
+    #   - -0.7
+    #   - -2.2
+
+    joint_zero_positions: [0.,-0.63,-2.205, 0.,-0.63,-2.205] #  From URDF determined BY HEINER
 
     #joint_zero_positions: [0.,0.,0.,0.,0.,0.]
 
@@ -31,7 +33,6 @@ cubemars_hardware_node:
         can_id: 6
         motor_type: "AK10-9"
         cf: 0.22
-        invert: true
 
       joint_ll_knee:
         msg_idx: 2
@@ -55,6 +56,7 @@ cubemars_hardware_node:
         can_id: 3
         motor_type: "AK10-9"
         cf: 0.22
+        invert: true
 
       joint_rl_knee:
         msg_idx: 5
@@ -64,5 +66,7 @@ cubemars_hardware_node:
         cf: 0.22
         invert: true
         transmission_ratio: 1.5
+
+
 
 

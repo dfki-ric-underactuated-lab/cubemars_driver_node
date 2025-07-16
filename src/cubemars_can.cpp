@@ -97,7 +97,7 @@ void cubemars::CubemarsCan::send_control_frame(const canid_t &can_id, const std:
         throw cubemars::can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
     // Receive answer
-    memset(&recv_frame_, 0, CAN_MTU);
+    memset(&recv_frame_, 0, sizeof(recv_frame_));
     int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
     if (nbytes <= 0)
     {

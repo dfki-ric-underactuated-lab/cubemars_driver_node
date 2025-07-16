@@ -226,6 +226,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
+    RCLCPP_WARN(this->get_logger(), "Cleaning up");
     // Stop all times
     publish_timer_.reset();
     can_cycle_timers_per_can_interface_.clear();
@@ -287,6 +288,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_state_msg_.effort.clear();
     joint_temp_msg_.data.clear();
     joint_names_per_can_interface_.clear();
+    joint_zero_positions_.clear();
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_pub_.reset();
@@ -297,6 +299,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
     // Always return success, since then the driver is unconfigured(). And from there we can try to start over again.
     (void)success;
+    RCLCPP_WARN(this->get_logger(), "Clean up done ok");
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -392,6 +395,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_states_per_can_interface_.clear();
         joint_commands_per_can_interface_.clear();
         joint_names_per_can_interface_.clear();
+        joint_zero_positions_.clear();
         if (publish_ros2_joint_state_)
         {
             ros2_joint_state_pub_.reset();
@@ -473,6 +477,9 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
 
 void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
 {
+    if(!(this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE || this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)){
+        return;
+    }
 
     auto &joint_cmds = joint_commands_per_can_interface_[can_interface_idx];
     auto &joint_states = joint_states_per_can_interface_[can_interface_idx];
@@ -501,6 +508,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_cmds[i].torque = joint_cmd_msg_.effort[msg_idxs[i]];
     }
     joint_cmd_msg_mutex_.unlock_shared();
+
 
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
     {
@@ -543,12 +551,16 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             // Try to go into damping
             RCLCPP_WARN(this->get_logger(), "For safety reasons deactivate() motors into DAMPING");
             deactivate();
+            return;
         }else{
             //TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
-            RCLCPP_ERROR(this->get_logger(), "For safety reasons cleanup() motors into OFF");
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons cleanup() motors into OFF (can process %i)", can_interface_idx);
             cleanup();
+            return;
         }
     }
+
+
     // Check status
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
     {
@@ -565,6 +577,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             }
         }
     }
+
+
 
     // Add transmission ratios to joint states
     for (unsigned int i = 0; i < joint_states.size(); i++)
