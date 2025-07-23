@@ -4,7 +4,6 @@ cubemars_hardware_node:
     default_damping_KD: 1.0
     watchdog_frequency: 100
     frequency: 1000
-    friction_compensation_sign_steepness: 100.
     can_socket_timeout_usec: 100000
     # joint_zero_positions: #Experimentally determined BY FRANEK
     #   - 0.0
@@ -24,7 +23,11 @@ cubemars_hardware_node:
         can_interface: "can1"
         can_id: 4
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
         invert: true
       
       joint_ll_hip_2:
@@ -32,14 +35,22 @@ cubemars_hardware_node:
         can_interface: "can1"
         can_id: 6
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
 
       joint_ll_knee:
         msg_idx: 2
         can_interface: "can1"
         can_id: 5
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 1.0
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
         transmission_ratio: 1.5
 
       joint_rl_hip_1:
@@ -47,7 +58,11 @@ cubemars_hardware_node:
         can_interface: "can0"
         can_id: 1
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
         invert: true
       
       joint_rl_hip_2:
@@ -55,7 +70,11 @@ cubemars_hardware_node:
         can_interface: "can0"
         can_id: 3
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
         invert: true
 
       joint_rl_knee:
@@ -63,7 +82,11 @@ cubemars_hardware_node:
         can_interface: "can0"
         can_id: 2
         motor_type: "AK10-9"
-        cf: 0.22
+        tau_c: 0.0
+        tau_s: 1.0
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
         invert: true
         transmission_ratio: 1.5
 

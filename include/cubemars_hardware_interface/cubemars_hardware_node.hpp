@@ -17,10 +17,17 @@ using namespace rclcpp_lifecycle::node_interfaces;
 class CubeMarsHardwareNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
+    /**
+     * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b): 
+     * tau_f =  tau_c + (tau_s - tau_c)*exp(-|v|/v_s)^k*sign(v) + b*v
+     */
     struct friction_parameters
     {
-        double b;
-        double cf;
+        double tau_c; // Coulomb friction 
+        double tau_s; // Static friction  
+        double v_s;   // Stribeck Velocity
+        double k;     // Exponential term
+        double b;     // Viscous friction coefficient
     };
 
 private:

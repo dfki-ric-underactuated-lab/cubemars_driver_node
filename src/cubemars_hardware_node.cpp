@@ -26,7 +26,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     {
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
-        friction_compensation_sign_steepness_ = this->get_parameter("friction_compensation_sign_steepness").as_double();
         frequency_ = std::chrono::duration<double>(1.0 / this->get_parameter("frequency").as_int());
         watchdog_frequency_ = std::chrono::duration<double>(1.0 / this->get_parameter("watchdog_frequency").as_int());
         publish_ros2_joint_state_ = this->get_parameter("publish_ros2_joint_state").as_bool();
@@ -55,9 +54,13 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".can_id", rclcpp::PARAMETER_INTEGER);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".motor_type", rclcpp::PARAMETER_STRING);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".invert", false);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".tau_c", 0.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".tau_s", 0.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".v_s", 1.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".k", 1.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".b", 0.0);
-            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".cf", 0.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".transmission_ratio", 1.0);
+
             // Validate joint defintions
             auto can_interface_name = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
             can_interfaces_names_.insert(can_interface_name);
@@ -142,8 +145,11 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
             joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::FAULT_CODE_NONE, true});
             msg_idxs_per_can_interface_[can_interface_id].push_back(msg_idx);
-            friction_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double(),
-                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".cf").as_double()});
+            friction_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".tau_c").as_double(),
+                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".tau_s").as_double(),
+                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".v_s").as_double(),
+                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".k").as_double(),
+                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()});
             transmission_ratios_per_can_interface_[can_interface_id].push_back(this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double());                                                                                    
             joint_names_per_can_interface_[can_interface_id].push_back(joint_names[i]);
             if (ros2_joint_state_pub_)
@@ -515,7 +521,20 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         // friction model
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
         {
-            joint_cmds[i].torque += friction_parameters[i].b * joint_states[i].vel + friction_parameters[i].cf * atan(friction_compensation_sign_steepness_ * joint_states[i].vel);
+            /**
+            * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b): 
+            * tau_f =  tau_c + (tau_s - tau_c)*exp(-(|v|/v_s)^k)*sign(v) + b*v
+            */
+            double tau_c   = friction_parameters[i].tau_c;  // Coulomb friction
+            double tau_s   = friction_parameters[i].tau_s;  // Static friction
+            double v_s     = friction_parameters[i].v_s;    // Stribeck Velocity
+            double k       = friction_parameters[i].k;      // Exponential term
+            double b       = friction_parameters[i].b;      // Viscous friction coefficient
+            double vel     = joint_states[i].vel;           // Actual velocity
+            double cmd_vel = joint_cmds[i].vel;             // Commanded velocity (used to argue about motion direction)
+
+            double sign_vel = 1.0 ? cmd_vel > 0 : -1.0; 
+            joint_cmds[i].torque += tau_c + (tau_s-tau_c)*exp(-pow(fabs(vel)/v_s, k))*sign_vel + b*vel; 
         }
         // transmission ratios
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
