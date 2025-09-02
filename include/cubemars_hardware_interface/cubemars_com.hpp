@@ -118,6 +118,7 @@ namespace cubemars
         double KD_MIN = std::numeric_limits<double>::quiet_NaN();
         double KD_MAX = std::numeric_limits<double>::quiet_NaN();
         bool invert = false;
+        bool reply_on_own_id = false;
     };
 
     // For MIT mode
@@ -146,9 +147,10 @@ namespace cubemars
     };
 
     static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={
-        {"AK10-9",      {0, "", -12.5, 12.5, -50.0, 50.0, -65.0, 65.0, 0.0, 500.0, 0.0, 5.0, false}},
-        {"AK80-6",      {0, "", -12.5, 12.5, -76.0, 76.0, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, false}},
-        {"AK80-6_V1p1", {0, "", -12.5, 12.5, -22.5, 22.5, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, true}}
+        {"AK10-9",      {0,"", -12.5, 12.5, -50.0, 50.0, -65.0, 65.0, 0.0, 500.0, 0.0, 5.0, false, true}},
+        {"AK10-9_plastic_screw",      {0,"", -12.5, 12.5, -50.0, 50.0, -65.0, 65.0, 0.0, 500.0, 0.0, 5.0, false, false}},
+        {"AK80-6",      {0,"", -12.5, 12.5, -76.0, 76.0, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, false, true}},
+        {"AK80-6_V1p1", {0,"", -12.5, 12.5, -22.5, 22.5, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, true, true}}
     };
 
 } // namespace cubemars

@@ -18,6 +18,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp
   rclcpp_lifecycle
   sensor_msgs
+  std_srvs
 )
 find_package(robot_control_msgs REQUIRED)
 
@@ -83,6 +84,7 @@ ament_target_dependencies(
   rclcpp_lifecycle
   robot_control_msgs
   sensor_msgs
+  std_srvs
 )
 
 install(TARGETS ${PROJECT_NAME} cubemars_hardware_node

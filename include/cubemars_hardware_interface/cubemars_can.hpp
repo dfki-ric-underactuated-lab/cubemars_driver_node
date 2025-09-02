@@ -22,49 +22,52 @@
 
 namespace cubemars
 {
-    class can_interface_error : public std::runtime_error {
-        public:
-        explicit can_interface_error(const std::string& __arg) : std::runtime_error(__arg) {}; 
-        explicit can_interface_error(const char* __arg) : std::runtime_error(__arg) {};
+    class can_interface_error : public std::runtime_error
+    {
+    public:
+        explicit can_interface_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit can_interface_error(const char *__arg) : std::runtime_error(__arg) {};
     };
 
-    class can_device_error : public std::runtime_error {
-        public:
-        explicit can_device_error(const std::string& __arg) : std::runtime_error(__arg) {}; 
-        explicit can_device_error(const char* __arg) : std::runtime_error(__arg) {};
+    class can_device_error : public std::runtime_error
+    {
+    public:
+        explicit can_device_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit can_device_error(const char *__arg) : std::runtime_error(__arg) {};
     };
 
-    class motor_error : public std::runtime_error {
-        public:
-        explicit motor_error(const std::string& __arg) : std::runtime_error(__arg) {}; 
-        explicit motor_error(const char* __arg) : std::runtime_error(__arg) {};
+    class motor_error : public std::runtime_error
+    {
+    public:
+        explicit motor_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit motor_error(const char *__arg) : std::runtime_error(__arg) {};
     };
-
-
 
     class CubemarsCan
     {
     public:
-        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_usec, bool set_zero_postion_on_enable);
-        void start_motor_control_mode(unsigned int joint_id);
+        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec);
+        void start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable);
         void end_motor_control_mode(unsigned int joint_id);
-        void start_motor_control_mode();
+        void start_motor_control_mode(bool set_zero_postion_on_enable);
         void end_motor_control_mode();
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states);
-        
-        const std::string & GetName() {
+
+        const std::string &GetName()
+        {
             return can_interface_;
         }
         virtual ~CubemarsCan();
+
     private:
         std::string can_interface_;
         int enable_loopback_;
         std::vector<joint_config_t> joint_configs_;
+        long socket_timeout_sec_;
+        long socket_timeout_usec_;
         std::vector<bool> send_ok_;
         std::vector<bool> recv_ok_;
-        bool set_zero_postion_on_enable_;
-
         int can_socket_fd_;
         can_frame send_frame_;
         can_frame recv_frame_;
@@ -87,7 +90,7 @@ namespace cubemars
             else if (x > x_max)
                 x = x_max;
 
-            return (int)((x - x_min) * ((float)((1 << bits) -1))/ span);
+            return (int)((x - x_min) * ((float)((1 << bits) - 1)) / span);
         }
 
         /**
@@ -101,4 +104,3 @@ namespace cubemars
         }
     };
 }
-

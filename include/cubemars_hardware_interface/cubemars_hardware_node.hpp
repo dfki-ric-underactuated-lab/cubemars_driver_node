@@ -11,6 +11,7 @@
 #include <semaphore>
 #include <shared_mutex>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include "std_srvs/srv/trigger.hpp"
 
 using namespace rclcpp_lifecycle::node_interfaces;
 
@@ -54,8 +55,8 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
     sensor_msgs::msg::JointState ros2_joint_state_msg_;
     bool publish_ros2_joint_state_;
-    std::vector<double> joint_zero_positions_;
     
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr set_all_motors_origin_here_srv_;
 
     double default_damping_KD_;
     double friction_compensation_sign_steepness_;
@@ -72,6 +73,8 @@ private:
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<std::vector<std::string>> joint_names_per_can_interface_;
+    std::vector<std::vector<double>> zero_positions_per_can_interface_;
+    std::vector<std::vector<bool>> set_zero_positions_on_startup_per_can_interface_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
 
     template <typename T>
@@ -111,4 +114,6 @@ public:
     void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand &joint_cmd_msg);
     void joint_state_publish_callback();
     void can_cycle_callback(unsigned int can_interface_idx);
+    void set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 };

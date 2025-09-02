@@ -1,12 +1,13 @@
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include <iostream>
 
-cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_usec, bool set_zero_postion_on_enable) : can_interface_(can_interface),
-                                                                                                                                                                                                                       enable_loopback_(enable_loopback),
-                                                                                                                                                                                                                       joint_configs_(joint_configs),
-                                                                                                                                                                                                                       send_ok_(joint_configs_.size()),
-                                                                                                                                                                                                                       recv_ok_(joint_configs_.size()),
-                                                                                                                                                                                                                       set_zero_postion_on_enable_(set_zero_postion_on_enable)
+cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec) : can_interface_(can_interface),
+                                                                                                                                                                                                                      enable_loopback_(enable_loopback),
+                                                                                                                                                                                                                      joint_configs_(joint_configs),
+                                                                                                                                                                                                                      socket_timeout_sec_(socket_timeout_sec),
+                                                                                                                                                                                                                      socket_timeout_usec_(socket_timeout_usec),
+                                                                                                                                                                                                                      send_ok_(joint_configs_.size()),
+                                                                                                                                                                                                                      recv_ok_(joint_configs_.size())
 {
     // Configuring CAN socket
     struct sockaddr_can addr;
@@ -25,12 +26,19 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
     }
     // Set CAN filter
     std::vector<can_filter> rfilter;
-    rfilter.resize(joint_configs.size());
+    bool zero_added = false;
     for (unsigned int i = 0; i < joint_configs.size(); i++)
     {
-        rfilter[i].can_id = joint_configs[i].can_id;
-        rfilter[i].can_mask = CAN_SFF_MASK;
+        if (joint_configs[i].reply_on_own_id)
+        {
+            rfilter.push_back({joint_configs[i].can_id, CAN_SFF_MASK});
+        }
+        else if (!zero_added)
+        {
+            rfilter.push_back({0, CAN_SFF_MASK});
+        }
     }
+
     if (setsockopt(can_socket_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, rfilter.data(), rfilter.size() * sizeof(can_filter)) < 0)
     {
         // Trying to close socket - Ignore failures since we cant do anyways
@@ -61,7 +69,7 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
     }
     // set socket timeout
     struct timeval tv;
-    tv.tv_sec = 0;
+    tv.tv_sec = socket_timeout_sec;
     tv.tv_usec = socket_timeout_usec;
     if (
         setsockopt(can_socket_fd_,
@@ -103,7 +111,8 @@ void cubemars::CubemarsCan::send_control_frame(const canid_t &can_id, const std:
     {
         throw cubemars::can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
     }
-    if (recv_frame_.can_id != can_id)
+    auto id = recv_frame_.data[0];
+    if (id != can_id)
     {
         throw cubemars::can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
     }
@@ -202,16 +211,19 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             //     }
             //     throw cubemars::can_device_error(std::format("Failed to write can frame to can_id {} - {}. {} reads have failed afterwards ",  std::to_string(joint_configs_[i].can_id),  std::string(strerror(errno)), std::to_string(more_fails)));
             //
-            error_msg += std::format("Failed to write can frame to can_id {} - {}\n",  std::to_string(joint_configs_[i].can_id),  std::string(strerror(errno)));
+            error_msg += std::format("Failed to write can frame to can_id {} - {}\n", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)));
             send_ok_[i] = false;
-        }else{
+        }
+        else
+        {
             send_ok_[i] = true;
         }
     }
     // Receive all commands
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
-        if(!send_ok_[i]){
+        if (!send_ok_[i])
+        {
             continue;
         }
         recv_ok_[i] = false; // Will be set when reply is there
@@ -220,44 +232,45 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
         if (nbytes < 0)
         {
-        //     // Before throwing other missing frames have to by tried to receive
-        //     unsigned int more_fails = 0;
-        //     for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
-        //     {
-        //         if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
-        //         {
-        //             more_fails++;
-        //         }
-        //     }
-        //     throw cubemars::can_device_error(std::format("Failed to read from can id {} on interface {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), can_interface_, std::string(strerror(errno)), std::to_string(more_fails)));
-        // 
-        read_fails++;
-        error_msg += std::format("Failed to read from can id {} on interface {} - {}.\n", std::to_string(joint_configs_[i].can_id), can_interface_, std::string(strerror(errno)));
-        }
-        if (recv_frame_.can_id == 0)
-        {
-            // TODO: (taken from MT) more sophisticated error handling here
-            // // Before throwing other missing frames have to by tried to receive
-            // unsigned int more_fails = 0;
-            // for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
-            // {
-            //     if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+            //     // Before throwing other missing frames have to by tried to receive
+            //     unsigned int more_fails = 0;
+            //     for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
             //     {
-            //         more_fails++;
+            //         if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+            //         {
+            //             more_fails++;
+            //         }
             //     }
-            // }
-
-            // throw cubemars::can_device_error(std::format("Got unknown CAN-ID 0 instead of {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)), std::to_string(more_fails)));
+            //     throw cubemars::can_device_error(std::format("Failed to read from can id {} on interface {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), can_interface_, std::string(strerror(errno)), std::to_string(more_fails)));
+            //
             read_fails++;
-            error_msg += std::format("Got unknown CAN-ID 0 instead of {} - {}.\n", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)));
-            continue;
+            error_msg += std::format("Failed to read from can id {} on interface {} - {}.\n", std::to_string(joint_configs_[i].can_id), can_interface_, std::string(strerror(errno)));
         }
+        // if (recv_frame_.can_id == 0)
+        // {
+        //     // TODO: (taken from MT) more sophisticated error handling here
+        //     // // Before throwing other missing frames have to by tried to receive
+        //     // unsigned int more_fails = 0;
+        //     // for (unsigned int oi = i + 1; oi < joint_configs_.size(); oi++)
+        //     // {
+        //     //     if (::read(can_socket_fd_, &recv_frame_, CAN_MTU) < 0)
+        //     //     {
+        //     //         more_fails++;
+        //     //     }
+        //     // }
+
+        //     // throw cubemars::can_device_error(std::format("Got unknown CAN-ID 0 instead of {} - {}. {} reads have failed afterwards ", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)), std::to_string(more_fails)));
+        //     read_fails++;
+        //     error_msg += std::format("Got unknown CAN-ID 0 instead of {} - {}.\n", std::to_string(joint_configs_[i].can_id), std::string(strerror(errno)));
+        //     continue;
+        // }
         // Lookup can_id
+        auto can_id = recv_frame_.data[0];
         auto it = std::find_if(
             joint_configs_.begin(),
             joint_configs_.end(),
             [&](const auto &conf)
-            { return conf.can_id == recv_frame_.can_id; });
+            { return conf.can_id == can_id; });
 
         if (it == joint_configs_.end())
         {
@@ -271,7 +284,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             //     }
             // }
             // throw cubemars::can_device_error(std::format("Received reply from unknown can device with CAN_id {}. {} reads have failed afterwards ", std::to_string(recv_frame_.can_id), std::to_string(more_fails)));
-            error_msg += std::format("Received reply from unknown can device with CAN_id {}.\n", std::to_string(recv_frame_.can_id));
+            error_msg += std::format("Received reply from unknown can device with CAN_id {}.\n", std::to_string(can_id));
             continue;
         }
         unsigned int joint_index = it - joint_configs_.begin();
@@ -298,25 +311,56 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         }
     }
 
-    for (unsigned int joint_index = 0; joint_index < joint_configs_.size(); joint_index++){
-        states[joint_index].com_ok = recv_ok_[joint_index] && send_ok_[joint_index]; 
+    for (unsigned int joint_index = 0; joint_index < joint_configs_.size(); joint_index++)
+    {
+        states[joint_index].com_ok = recv_ok_[joint_index] && send_ok_[joint_index];
     }
 
-    if(read_fails > 0 || send_fails > 0){
+    if (read_fails > 0 || send_fails > 0)
+    {
         throw cubemars::can_device_error(error_msg);
     }
 }
 
-void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id)
+void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable)
 {
     if (joint_id >= joint_configs_.size())
     {
         throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
     }
-    if (set_zero_postion_on_enable_)
+    // Send stop command first to ensure there is no old command in the motor before enabling
+
+    if (set_zero_postion_on_enable)
     {
+        // Increasing timeout as this takes a few seconds
+        // set socket timeout
+        struct timeval tv;
+        tv.tv_sec = 10;
+        tv.tv_usec = 0;
+        if (
+            setsockopt(can_socket_fd_,
+                       SOL_SOCKET,
+                       SO_RCVTIMEO,
+                       (const char *)&tv,
+                       sizeof(struct timeval)) < 0)
+        {
+            throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+        }
         send_control_frame(joint_configs_[joint_id].can_id, cubemars::SET_ZERO_POSITION);
+        // Resetting timeout
+        tv.tv_sec = socket_timeout_sec_;
+        tv.tv_usec = socket_timeout_usec_;
+        if (
+            setsockopt(can_socket_fd_,
+                       SOL_SOCKET,
+                       SO_RCVTIMEO,
+                       (const char *)&tv,
+                       sizeof(struct timeval)) < 0)
+        {
+            throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+        }
     }
+
     send_control_frame(joint_configs_[joint_id].can_id, cubemars::START_MOTOR_CONTROL_MODE);
 }
 
@@ -329,11 +373,11 @@ void cubemars::CubemarsCan::end_motor_control_mode(unsigned int joint_id)
     send_control_frame(joint_configs_[joint_id].can_id, cubemars::EXIT_MOTOR_CONTROL_MODE);
 }
 
-void cubemars::CubemarsCan::start_motor_control_mode()
+void cubemars::CubemarsCan::start_motor_control_mode(bool set_zero_postion_on_enable)
 {
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
-        start_motor_control_mode(i);
+        start_motor_control_mode(i, set_zero_postion_on_enable);
     }
 }
 

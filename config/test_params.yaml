@@ -1,10 +1,11 @@
 cubemars_hardware_node:
   ros__parameters:
-    joints: ["joint_ll_hip_1","joint_ll_hip_2", "joint_ll_knee", "joint_rl_hip_1", "joint_rl_hip_2", "joint_rl_knee"]
+    joints: ["joint_test"]
     default_damping_KD: 1.0
     watchdog_frequency: 100
     frequency: 1000
-    can_socket_timeout_usec: 100000
+    can_socket_timeout_sec: 0
+    can_socket_timeout_usec: 10000
     # joint_zero_positions: #Experimentally determined BY FRANEK
     #   - 0.0
     #   - -0.7
@@ -13,11 +14,25 @@ cubemars_hardware_node:
     #   - -0.7
     #   - -2.2
 
-    joint_zero_positions: [0.,-0.63,-2.205, 0.,-0.63,-2.205] #  From URDF determined BY HEINER
+    #joint_zero_positions: [0.,-0.63,-2.205, 0.,-0.63,-2.205] #  From URDF determined BY HEINER
 
     #joint_zero_positions: [0.,0.,0.,0.,0.,0.]
 
     joint_defintions:
+      joint_test:
+        msg_idx: 0
+        can_interface: "can0"
+        can_id: 21
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 0.0
+        v_s: 0.5
+        k: 1.0
+        b: 0.0
+        set_zero_position_on_configure: false
+        invert: false
+        zero_position: 0.0
+        
       joint_ll_hip_1:
         msg_idx: 0
         can_interface: "can1"
@@ -29,6 +44,7 @@ cubemars_hardware_node:
         k: 1.0
         b: 0.3
         invert: true
+
       
       joint_ll_hip_2:
         msg_idx: 1

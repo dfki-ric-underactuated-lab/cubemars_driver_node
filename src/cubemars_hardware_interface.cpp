@@ -14,15 +14,14 @@ namespace cubemars_hardware_interface
     }
 
     hw::CallbackReturn CubemarsHardwareInterface::on_init(
-        const hw::HardwareInfo &info)
+        const hw::HardwareComponentInterfaceParams & params)
     {
         if (
-            hw::SystemInterface::on_init(info) !=
+            SystemInterface::on_init(params) !=
             hw::CallbackReturn::SUCCESS)
         {
             return hw::CallbackReturn::ERROR;
         }
-
         if (info_.hardware_parameters["can_interface"].empty())
         {
             RCLCPP_FATAL(
