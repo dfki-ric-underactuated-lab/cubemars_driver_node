@@ -1,0 +1,95 @@
+cubemars_hardware_node:
+  ros__parameters:
+    joints: ["joint_ll_hip_1","joint_ll_hip_2", "joint_ll_knee", "joint_rl_hip_1", "joint_rl_hip_2", "joint_rl_knee"]
+    default_damping_KD: 1.0
+    watchdog_frequency: 10
+    frequency: 1000
+    can_socket_timeout_usec: 10000
+
+    joint_defintions:
+      joint_ll_hip_1:
+        msg_idx: 0
+        can_interface: "can1"
+        can_id: 4
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        invert: true
+        zero_position: 0.
+        set_zero_position_on_configure: false
+      
+      joint_ll_hip_2:
+        msg_idx: 1
+        can_interface: "can1"
+        can_id: 6
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        zero_position: -0.63
+        set_zero_position_on_configure: false
+
+      joint_ll_knee:
+        msg_idx: 2
+        can_interface: "can1"
+        can_id: 5
+        motor_type: "AK10-9"
+        tau_s: 1.0
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        transmission_ratio: 1.5
+        zero_position: -2.205
+        set_zero_position_on_configure: false
+
+      joint_rl_hip_1:
+        msg_idx: 3
+        can_interface: "can0"
+        can_id: 1
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        invert: true
+        zero_position: 0.
+        set_zero_position_on_configure: false
+      
+      joint_rl_hip_2:
+        msg_idx: 4
+        can_interface: "can0"
+        can_id: 3
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 0.5
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        invert: true
+        zero_position: -0.63
+        set_zero_position_on_configure: false
+
+      joint_rl_knee:
+        msg_idx: 5
+        can_interface: "can0"
+        can_id: 2
+        motor_type: "AK10-9"
+        tau_c: 0.0
+        tau_s: 1.0
+        v_s: 0.5
+        k: 1.0
+        b: 0.3
+        invert: true
+        transmission_ratio: 1.5
+        zero_position: -2.205
+        set_zero_position_on_configure: false
+
+
+
+
