@@ -22,13 +22,25 @@ public:
      * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b): 
      * tau_f =  tau_c + (tau_s - tau_c)*exp(-|v|/v_s)^k*sign(v) + b*v
      */
-    struct friction_parameters
+    struct FrictionParameters
     {
         double tau_c; // Coulomb friction 
         double tau_s; // Static friction  
         double v_s;   // Stribeck Velocity
         double k;     // Exponential term
         double b;     // Viscous friction coefficient
+    };
+
+    struct JointParameters
+    {
+        double pos_limit_min;
+        double pos_limit_max;
+        double transmission_ratio;
+        FrictionParameters friction_parameters;
+        double zero_position;
+        bool set_zero_position_on_startup;
+        unsigned int msg_idx;
+        std::string name;
     };
 
 private:
@@ -63,18 +75,12 @@ private:
     unsigned int num_joints_;
 
     std::set<std::string> can_interfaces_names_; // This determines the order
-
     std::vector<std::vector<cubemars::joint_cmd_t>> joint_commands_per_can_interface_;
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
-    std::vector<std::vector<unsigned int>> msg_idxs_per_can_interface_;
-    std::vector<std::vector<friction_parameters>> friction_parameters_per_can_interface_;
-    std::vector<std::vector<double>> transmission_ratios_per_can_interface_;
+    std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<rclcpp::TimerBase::SharedPtr> can_cycle_timers_per_can_interface_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
-    std::vector<std::vector<std::string>> joint_names_per_can_interface_;
-    std::vector<std::vector<double>> zero_positions_per_can_interface_;
-    std::vector<std::vector<bool>> set_zero_positions_on_startup_per_can_interface_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
 
     template <typename T>

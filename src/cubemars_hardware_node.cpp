@@ -47,7 +47,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".msg_idx", static_cast<int>(i));
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".can_interface", rclcpp::PARAMETER_STRING);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".can_id", rclcpp::PARAMETER_INTEGER);
-
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".motor_type", rclcpp::PARAMETER_STRING);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".invert", false);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".tau_c", 0.0);
@@ -58,6 +57,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".transmission_ratio", 1.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure", false);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".zero_position", 0.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".pos_limit_min", std::numeric_limits<double>::lowest());
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".pos_limit_max", std::numeric_limits<double>::max());
 
             // Validate joint defintions
             auto can_interface_name = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
@@ -98,15 +99,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_configs_per_can_interface.resize(num_can_interfaces);
         joint_commands_per_can_interface_.resize(num_can_interfaces);
         joint_states_per_can_interface_.resize(num_can_interfaces);
-        msg_idxs_per_can_interface_.resize(num_can_interfaces);
-        joint_commands_per_can_interface_.resize(num_can_interfaces);
-        friction_parameters_per_can_interface_.resize(num_can_interfaces);
-        transmission_ratios_per_can_interface_.resize(num_can_interfaces);
+        joint_parameters_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
-        joint_names_per_can_interface_.resize(num_can_interfaces);
         can_interfaces_.resize(num_can_interfaces);
-        zero_positions_per_can_interface_.resize(num_can_interfaces);
-        set_zero_positions_on_startup_per_can_interface_.resize(num_can_interfaces);
         last_can_cycle_times_.resize(num_can_interfaces, this->get_clock()->now());
         for (unsigned int i = 0; i < num_can_interfaces; i++)
         {
@@ -145,17 +140,18 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
             joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::FAULT_CODE_NONE, true});
-            msg_idxs_per_can_interface_[can_interface_id].push_back(msg_idx);
-            friction_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".tau_c").as_double(),
-                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".tau_s").as_double(),
-                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".v_s").as_double(),
-                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".k").as_double(),
-                                                                                this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()});
-            transmission_ratios_per_can_interface_[can_interface_id].push_back(this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double());
-            joint_names_per_can_interface_[can_interface_id].push_back(joint_names[i]);
-            bool set_zero_position = this->get_parameter("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure").as_bool();
-            set_zero_positions_on_startup_per_can_interface_[can_interface_id].push_back(set_zero_position);
-            zero_positions_per_can_interface_[can_interface_id].push_back(this->get_parameter("joint_defintions." + joint_names[i] + ".zero_position").as_double());
+            joint_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_min").as_double(),
+                                                                             this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_max").as_double(),
+                                                                             this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double(),
+                                                                             {this->get_parameter("joint_defintions." + joint_names[i] + ".tau_c").as_double(),
+                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".tau_s").as_double(),
+                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".v_s").as_double(),
+                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".k").as_double(),
+                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()},
+                                                                             this->get_parameter("joint_defintions." + joint_names[i] + ".zero_position").as_double(),
+                                                                             this->get_parameter("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure").as_bool(),
+                                                                             static_cast<unsigned int>(msg_idx),
+                                                                             joint_names[i]});
 
             if (ros2_joint_state_pub_)
             {
@@ -185,17 +181,16 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             "set_all_motors_origin_here",
             std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
 
-        // Create timers that will enable all control cycles:
         // Now create can devices and callback
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
             // Enable all motors
             try
             {
-                for (unsigned int j = 0; j < joint_names_per_can_interface_[i].size(); j++)
+                for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
                 {
                     RCLCPP_INFO(this->get_logger(), "Activate can_interface %s, can_id %i", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id);
-                    can_interfaces_[i]->start_motor_control_mode(j, set_zero_positions_on_startup_per_can_interface_[i][j]);
+                    can_interfaces_[i]->start_motor_control_mode(j, joint_parameters_per_can_interface_[i][j].set_zero_position_on_startup);
                 }
             }
             catch (const std::exception &e)
@@ -219,6 +214,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 return LifecycleNodeInterface::CallbackReturn::ERROR;
             }
         }
+        // Create timers that will enable all control cycles:
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
             // Create all Can cyle timer
@@ -268,7 +264,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
             }
             catch (std::exception &e)
             {
-                RCLCPP_ERROR(this->get_logger(), "Error when stopping motor %s on can interface %s (joint with msg_idx %i): %s", joint_names_per_can_interface_[i][j].c_str(), can_interfaces_[i]->GetName().c_str(), msg_idxs_per_can_interface_[i][j], e.what());
+                RCLCPP_ERROR(this->get_logger(), "Error when stopping motor %s on can interface %s (joint with msg_idx %i): %s", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), joint_parameters_per_can_interface_[i][j].msg_idx, e.what());
                 success = false;
             }
         }
@@ -284,9 +280,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
         success = false;
     }
 
-    friction_parameters_per_can_interface_.clear();
-    transmission_ratios_per_can_interface_.clear();
-    msg_idxs_per_can_interface_.clear();
+    joint_parameters_per_can_interface_.clear();
     joint_states_per_can_interface_.clear();
     joint_commands_per_can_interface_.clear();
     can_interfaces_names_.clear();
@@ -307,9 +301,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_state_msg_.velocity.clear();
     joint_state_msg_.effort.clear();
     joint_temp_msg_.data.clear();
-    joint_names_per_can_interface_.clear();
-    zero_positions_per_can_interface_.clear();
-    set_zero_positions_on_startup_per_can_interface_.clear();
     set_all_motors_origin_here_srv_.reset();
     if (publish_ros2_joint_state_)
     {
@@ -411,14 +402,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_state_msg_.velocity.clear();
         joint_state_msg_.effort.clear();
         joint_temp_msg_.data.clear();
-        friction_parameters_per_can_interface_.clear();
-        transmission_ratios_per_can_interface_.clear();
-        msg_idxs_per_can_interface_.clear();
         joint_states_per_can_interface_.clear();
         joint_commands_per_can_interface_.clear();
-        joint_names_per_can_interface_.clear();
-        zero_positions_per_can_interface_.clear();
-        set_zero_positions_on_startup_per_can_interface_.clear();
+        joint_parameters_per_can_interface_.clear();
         set_all_motors_origin_here_srv_.reset();
         if (publish_ros2_joint_state_)
         {
@@ -508,10 +494,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
 
     auto &joint_cmds = joint_commands_per_can_interface_[can_interface_idx];
     auto &joint_states = joint_states_per_can_interface_[can_interface_idx];
-    auto &msg_idxs = msg_idxs_per_can_interface_[can_interface_idx];
-    auto &friction_parameters = friction_parameters_per_can_interface_[can_interface_idx];
-    auto &transmissions = transmission_ratios_per_can_interface_[can_interface_idx];
-    auto &zero_positions = zero_positions_per_can_interface_[can_interface_idx];
+    auto &joint_params = joint_parameters_per_can_interface_[can_interface_idx];
 
     // Calculate timings
     auto current_time = this->get_clock()->now();
@@ -527,11 +510,11 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
     {
-        joint_cmds[i].kd = joint_cmd_msg_.kd[msg_idxs[i]];
-        joint_cmds[i].kp = joint_cmd_msg_.kp[msg_idxs[i]];
-        joint_cmds[i].pos = joint_cmd_msg_.position[msg_idxs[i]] - zero_positions[i];
-        joint_cmds[i].vel = joint_cmd_msg_.velocity[msg_idxs[i]];
-        joint_cmds[i].torque = joint_cmd_msg_.effort[msg_idxs[i]];
+        joint_cmds[i].kd = joint_cmd_msg_.kd[joint_params[i].msg_idx];
+        joint_cmds[i].kp = joint_cmd_msg_.kp[joint_params[i].msg_idx];
+        joint_cmds[i].pos = joint_cmd_msg_.position[joint_params[i].msg_idx] - joint_params[i].zero_position;
+        joint_cmds[i].vel = joint_cmd_msg_.velocity[joint_params[i].msg_idx];
+        joint_cmds[i].torque = joint_cmd_msg_.effort[joint_params[i].msg_idx];
     }
     joint_cmd_msg_mutex_.unlock_shared();
 
@@ -544,13 +527,13 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
              * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b):
              * tau_f =  tau_c + (tau_s - tau_c)*exp(-(|v|/v_s)^k)*sign(v) + b*v
              */
-            double tau_c = friction_parameters[i].tau_c; // Coulomb friction
-            double tau_s = friction_parameters[i].tau_s; // Static friction
-            double v_s = friction_parameters[i].v_s;     // Stribeck Velocity
-            double k = friction_parameters[i].k;         // Exponential term
-            double b = friction_parameters[i].b;         // Viscous friction coefficient
-            double vel = joint_states[i].vel;            // Actual velocity
-            double cmd_vel = joint_cmds[i].vel;          // Commanded velocity (used to argue about motion direction)
+            double tau_c = joint_params[i].friction_parameters.tau_c; // Coulomb friction
+            double tau_s = joint_params[i].friction_parameters.tau_s; // Static friction
+            double v_s = joint_params[i].friction_parameters.v_s;     // Stribeck Velocity
+            double k = joint_params[i].friction_parameters.k;         // Exponential term
+            double b = joint_params[i].friction_parameters.b;         // Viscous friction coefficient
+            double vel = joint_states[i].vel;                         // Actual velocity
+            double cmd_vel = joint_cmds[i].vel;                       // Commanded velocity (used to argue about motion direction)
 
             double sign_vel = 1.0 ? cmd_vel > 0 : -1.0;
             joint_cmds[i].torque += tau_c + (tau_s - tau_c) * exp(-pow(fabs(vel) / v_s, k)) * sign_vel + b * vel;
@@ -558,9 +541,9 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         // transmission ratios
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
         {
-            joint_cmds[i].pos *= transmissions[i];
-            joint_cmds[i].vel *= transmissions[i];
-            joint_cmds[i].torque *= 1.0 / transmissions[i];
+            joint_cmds[i].pos *= joint_params[i].transmission_ratio;
+            joint_cmds[i].vel *= joint_params[i].transmission_ratio;
+            joint_cmds[i].torque *= 1.0 / joint_params[i].transmission_ratio;
         }
     }
 
@@ -607,12 +590,12 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         {
             if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
             {
-                RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s - deactivating (damping)", joint_names_per_can_interface_[can_interface_idx][i].c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), msg_idxs[can_interface_idx], cubemars::errorFlagToString(joint_states[i].status));
+                RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, cubemars::errorFlagToString(joint_states[i].status));
                 deactivate();
             }
             else
             {
-                RCLCPP_WARN(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s", joint_names_per_can_interface_[can_interface_idx][i].c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), msg_idxs[can_interface_idx], cubemars::errorFlagToString(joint_states[i].status));
+                RCLCPP_WARN(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, cubemars::errorFlagToString(joint_states[i].status));
             }
         }
     }
@@ -620,9 +603,9 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     // Add transmission ratios to joint states
     for (unsigned int i = 0; i < joint_states.size(); i++)
     {
-        joint_states[i].pos *= 1.0 / transmissions[i];
-        joint_states[i].vel *= 1.0 / transmissions[i];
-        joint_states[i].torque *= transmissions[i];
+        joint_states[i].pos *= 1.0 / joint_params[i].transmission_ratio;
+        joint_states[i].vel *= 1.0 / joint_params[i].transmission_ratio;
+        joint_states[i].torque *= joint_params[i].transmission_ratio;
     }
 
     // Write back state
@@ -634,11 +617,31 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
     for (unsigned int i = 0; i < joint_states.size(); i++)
     {
-        joint_state_msg_.position[msg_idxs[i]] = joint_states[i].pos + zero_positions[i];
-        joint_state_msg_.velocity[msg_idxs[i]] = joint_states[i].vel;
-        joint_state_msg_.effort[msg_idxs[i]] = joint_states[i].torque;
-        joint_temp_msg_.data[msg_idxs[i]] = joint_states[i].temp;
+        joint_state_msg_.position[joint_params[i].msg_idx] = joint_states[i].pos + joint_params[i].zero_position;
+        joint_state_msg_.velocity[joint_params[i].msg_idx] = joint_states[i].vel;
+        joint_state_msg_.effort[joint_params[i].msg_idx] = joint_states[i].torque;
+        joint_temp_msg_.data[joint_params[i].msg_idx] = joint_states[i].temp;
     }
+    // Check limits
+    if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+    {
+        for (unsigned int i = 0; i < joint_states.size(); i++)
+        {
+            if (joint_state_msg_.position[joint_params[i].msg_idx] < joint_params[i].pos_limit_min)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) violated min position limit (%f < %f) - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, joint_state_msg_.position[joint_params[i].msg_idx], joint_params[i].pos_limit_min);
+                joint_state_msg_mutex_.unlock_shared();
+                deactivate();
+            }
+            if (joint_state_msg_.position[joint_params[i].msg_idx] > joint_params[i].pos_limit_max)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) violated max position limit (%f > %f) - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, joint_state_msg_.position[joint_params[i].msg_idx], joint_params[i].pos_limit_max);
+                joint_state_msg_mutex_.unlock_shared();
+                deactivate();
+            }
+        }
+    }
+
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
     joint_state_msg_mutex_.unlock_shared();
 }
@@ -665,9 +668,9 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
     {
         try
         {
-            for (unsigned int j = 0; j < joint_names_per_can_interface_[i].size(); j++)
+            for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
-                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s)", joint_names_per_can_interface_[i][j].c_str(), can_interfaces_[i]->GetName().c_str());
+                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str());
                 can_interfaces_[i]->end_motor_control_mode(j);
                 can_interfaces_[i]->start_motor_control_mode(j, true);
             }
