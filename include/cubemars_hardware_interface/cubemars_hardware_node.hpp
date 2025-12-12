@@ -19,15 +19,16 @@ class CubeMarsHardwareNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
     /**
-     * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b): 
-     * tau_f =  tau_c + (tau_s - tau_c)*exp(-|v|/v_s)^k*sign(v) + b*v
+     * Stribeck friction model with 6 parameters (tau_c, tau_s, v_s, k, k_a, b):
+     * tau_f =  tau_c*tanh(k_a*v) + (tau_s - tau_c)*exp(-|v|/v_s)^k*tanh(k_a*v) + b*v
      */
     struct FrictionParameters
     {
-        double tau_c; // Coulomb friction 
-        double tau_s; // Static friction  
+        double tau_c; // Coulomb friction
+        double tau_s; // Static friction
         double v_s;   // Stribeck Velocity
         double k;     // Exponential term
+        double k_a;   // Steepness factor for tanh (instead of sign)
         double b;     // Viscous friction coefficient
     };
 
@@ -67,7 +68,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
     sensor_msgs::msg::JointState ros2_joint_state_msg_;
     bool publish_ros2_joint_state_;
-    
+
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr set_all_motors_origin_here_srv_;
 
     double default_damping_KD_;
@@ -89,7 +90,7 @@ private:
         if (!this->has_parameter(name)) // To prevent exceptions due to double declaration
         {
             this->declare_parameter<T>(name);
-        }   
+        }
         this->get_parameter(name).get_value<T>();
     }
 

@@ -53,6 +53,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".tau_s", 0.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".v_s", 1.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".k", 1.0);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".k_a", 1.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".b", 0.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".transmission_ratio", 1.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure", false);
@@ -147,6 +148,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".tau_s").as_double(),
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".v_s").as_double(),
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".k").as_double(),
+                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".k_a").as_double(),
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()},
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".zero_position").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure").as_bool(),
@@ -525,18 +527,19 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         {
             /**
              * Stribeck friction model with 5 parameters (tau_c, tau_s, v_s, k, b):
-             * tau_f =  tau_c + (tau_s - tau_c)*exp(-(|v|/v_s)^k)*sign(v) + b*v
+             * tau_f =  tau_c*tanh(k_a*v) + (tau_s - tau_c)*exp(-(|v|/v_s)^k)*tanh(k_a*v) + b*v
              */
             double tau_c = joint_params[i].friction_parameters.tau_c; // Coulomb friction
             double tau_s = joint_params[i].friction_parameters.tau_s; // Static friction
             double v_s = joint_params[i].friction_parameters.v_s;     // Stribeck Velocity
             double k = joint_params[i].friction_parameters.k;         // Exponential term
+            double k_a = joint_params[i].friction_parameters.k_a;     // Steepness factor for tanh (instead of sign)
             double b = joint_params[i].friction_parameters.b;         // Viscous friction coefficient
             double vel = joint_states[i].vel;                         // Actual velocity
-            double cmd_vel = joint_cmds[i].vel;                       // Commanded velocity (used to argue about motion direction)
+            // double cmd_vel = joint_cmds[i].vel;                       // Commanded velocity (used to argue about motion direction)
 
-            double sign_vel = 1.0 ? cmd_vel > 0 : -1.0;
-            joint_cmds[i].torque += tau_c + (tau_s - tau_c) * exp(-pow(fabs(vel) / v_s, k)) * sign_vel + b * vel;
+            double sign_vel = tanh(k_a * vel);
+            joint_cmds[i].torque += tau_c * sign_vel + (tau_s - tau_c) * exp(-pow(fabs(vel) / v_s, k)) * sign_vel + b * vel;
         }
         // transmission ratios
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
