@@ -424,7 +424,7 @@ namespace cubemars_hardware_interface
             }
 
             int ret_val = CubemarsHardwareInterface::unpack_reply(frame);
-            if (ret_val != cubemars::ErrorCode::FAULT_CODE_NONE)
+            if (ret_val != cubemars::ErrorCode::NO_FAULT)
             {
                 return hw::return_type::ERROR;
             }
@@ -604,7 +604,7 @@ namespace cubemars_hardware_interface
             return hw::return_type::ERROR;
         }
 
-        if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::FAULT_CODE_NONE)
+        if (CubemarsHardwareInterface::unpack_reply(frame) != cubemars::ErrorCode::NO_FAULT)
         {
             return hw::return_type::ERROR;
         }
@@ -746,7 +746,7 @@ namespace cubemars_hardware_interface
     cubemars::ErrorCode CubemarsHardwareInterface::unpack_reply(
         struct can_frame frame)
     {
-        cubemars::ErrorCode error_code = cubemars::ErrorCode::FAULT_CODE_NONE;
+        cubemars::ErrorCode error_code = cubemars::ErrorCode::NO_FAULT;
         auto it = std::find_if(
             hw_joint_configs_.begin(),
             hw_joint_configs_.end(),
@@ -780,7 +780,7 @@ namespace cubemars_hardware_interface
             hw_states_effort_[index] = i;
             hw_states_temperature_[index] = temp;
 
-            if (error_code != cubemars::ErrorCode::FAULT_CODE_NONE)
+            if (error_code != cubemars::ErrorCode::NO_FAULT)
             {
                 RCLCPP_FATAL(
                     rclcpp::get_logger("CubemarsHardwareInterface"),

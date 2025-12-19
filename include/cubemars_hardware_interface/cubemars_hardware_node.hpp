@@ -54,7 +54,12 @@ private:
     std::chrono::duration<double> frequency_;
     std::chrono::duration<double> watchdog_frequency_;
 
+    bool damping_on_motor_error_;
+    unsigned int max_can_errors_before_motor_shutdown_;
+
     bool msg_received_;
+
+
     robot_control_msgs::msg::JointCommand joint_cmd_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
@@ -80,6 +85,7 @@ private:
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<rclcpp::TimerBase::SharedPtr> can_cycle_timers_per_can_interface_;
+    std::vector<unsigned int> num_can_errors_per_interfaces_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;

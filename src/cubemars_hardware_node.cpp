@@ -9,13 +9,15 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     /**Declare and read parameters */
     this->declare_parameter_if_undeclared("joints", rclcpp::PARAMETER_STRING_ARRAY);
     this->declare_parameter_if_undeclared("default_damping_KD", rclcpp::PARAMETER_DOUBLE);
-    this->declare_parameter_if_undeclared("enable_loopback", false);
+    this->declare_parameter_if_undeclared("enable_loopback", true);
     this->declare_parameter_if_undeclared("can_socket_timeout_usec", 1000);
     this->declare_parameter_if_undeclared("can_socket_timeout_sec", 0);
     this->declare_parameter_if_undeclared("frequency", 1000);
     this->declare_parameter_if_undeclared("watchdog_frequency", 100);
     this->declare_parameter_if_undeclared("friction_compensation_sign_steepness", 100.);
     this->declare_parameter_if_undeclared("publish_ros2_joint_state", false);
+    this->declare_parameter_if_undeclared("damping_on_motor_error", true);
+    this->declare_parameter_if_undeclared("max_can_errors_before_motor_shutdown", 1);
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -24,6 +26,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     std::vector<std::vector<cubemars::joint_config_t>> joint_configs_per_can_interface;
     try
     {
+        damping_on_motor_error_ =this->get_parameter("damping_on_motor_error").as_bool();
+        max_can_errors_before_motor_shutdown_ = this->get_parameter("max_can_errors_before_motor_shutdown").as_int();
+
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
         frequency_ = std::chrono::duration<double>(1.0 / this->get_parameter("frequency").as_int());
@@ -102,6 +107,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_states_per_can_interface_.resize(num_can_interfaces);
         joint_parameters_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
+        num_can_errors_per_interfaces_.resize(num_can_interfaces, 0);
         can_interfaces_.resize(num_can_interfaces);
         last_can_cycle_times_.resize(num_can_interfaces, this->get_clock()->now());
         for (unsigned int i = 0; i < num_can_interfaces; i++)
@@ -140,7 +146,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface));
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
-            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::FAULT_CODE_NONE, true});
+            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0});
             joint_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_min").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_max").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double(),
@@ -184,38 +190,48 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
 
         // Now create can devices and callback
+        bool failure = false;
+        std::string error_string = "";
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-        {
-            // Enable all motors
-            try
+        { 
+            for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
-                for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
+                try // We catch this to actually now which all are missing and if it is a bus problem or a motor problem
                 {
-                    RCLCPP_INFO(this->get_logger(), "Activate can_interface %s, can_id %i", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id);
                     can_interfaces_[i]->start_motor_control_mode(j, joint_parameters_per_can_interface_[i][j].set_zero_position_on_startup);
+                    RCLCPP_INFO(this->get_logger(), "Succesfully enabled motor on can_interface %s with can_id %i", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id);
                 }
-            }
-            catch (const std::exception &e)
-            {
-                // Notidy users
-                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured: %s", can_interfaces_[i]->GetName().c_str(), e.what());
-                // This can only happen when actual motors are enabled, hence try to disable motors
-                try
+                catch(const std::exception & e)
                 {
-                    for (unsigned int i_o = 0; i_o <= i; i_o++)
-                    {
-                        // Enable all motors
-                        can_interfaces_[i_o]->end_motor_control_mode();
-                    }
-                    can_interfaces_.clear();
+                    error_string += std::string("\t") + e.what() + std::string("\n");
+                    failure = true;
                 }
-                catch (const std::exception &e)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s during deactivation occured, be carefull with still active motors: %s", can_interfaces_[i]->GetName().c_str(), e.what());
-                }
-                return LifecycleNodeInterface::CallbackReturn::ERROR;
             }
         }
+
+        if(failure){
+        
+                // Notify users
+                RCLCPP_ERROR(this->get_logger(), "Device error while enabling motor: \n %s", error_string.c_str());
+                RCLCPP_WARN(this->get_logger(), "Try to disable motors, might not work");
+                for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+                { 
+                for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
+                    {
+                     try
+                        {
+                            can_interfaces_[i]->end_motor_control_mode(j);
+                        }
+                        catch (const std::exception &e)
+                        {
+                            RCLCPP_WARN(this->get_logger(), "Device error while disabling motor on can_interface %s with can_id %i: %s\n BE CAREFULL WITH STILL ENABLED MOTORS!", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id, e.what());
+                        }
+                    }
+                }
+                can_interfaces_.clear();
+                return LifecycleNodeInterface::CallbackReturn::ERROR;
+        }
+        
         // Create timers that will enable all control cycles:
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
@@ -266,7 +282,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
             }
             catch (std::exception &e)
             {
-                RCLCPP_ERROR(this->get_logger(), "Error when stopping motor %s on can interface %s (joint with msg_idx %i): %s", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), joint_parameters_per_can_interface_[i][j].msg_idx, e.what());
+                RCLCPP_ERROR(this->get_logger(), "Error when disabling motor %s on can interface %s (joint with msg_idx %i): %s", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), joint_parameters_per_can_interface_[i][j].msg_idx, e.what());
                 success = false;
             }
         }
@@ -283,6 +299,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
 
     joint_parameters_per_can_interface_.clear();
+    num_can_errors_per_interfaces_.clear();
     joint_states_per_can_interface_.clear();
     joint_commands_per_can_interface_.clear();
     can_interfaces_names_.clear();
@@ -406,6 +423,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_temp_msg_.data.clear();
         joint_states_per_can_interface_.clear();
         joint_commands_per_can_interface_.clear();
+        num_can_errors_per_interfaces_.clear();
         joint_parameters_per_can_interface_.clear();
         set_all_motors_origin_here_srv_.reset();
         if (publish_ros2_joint_state_)
@@ -559,15 +577,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
     catch (const std::exception &e)
     {
-        // Communication to one or more motors failed.
-        // Now it is important to check was has happened:
-        // 1. If somebody has cut the power (Emergency stop) than the other threads are here as well -> All motors wont respond, hence goind to unconfigured is the only thing that makes sense now
-        // 2. If it is just a loose cable or one of the CAN busses failed, it is important to bring the other motors into damping  and keep them there  or stop them.
-        // 2. (a) in active state -> send into damping()
-        // 2. (b) in unconfigured state -> check how many failed.
-        // 2. (b1) if only one fails -> one motor is not reachable, stay in unconfigured to damp the others.
-        // 2. (b2) if all motors fail -> lost comms with all motors, notify other thread
-        // 2. (b3)
+        // This can only happen when something really bad happend (as all other erros are handled somehow else)
         can_communication_mutex_.unlock_shared();
         RCLCPP_ERROR(this->get_logger(), "%s", e.what());
         if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
@@ -586,21 +596,55 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
     }
 
+    unsigned int can_errors_in_this_cycle = 0;
+
     // Check status
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
     {
-        if (joint_states[i].status != cubemars::ErrorCode::FAULT_CODE_NONE)
+        if (joint_states[i].device_status != cubemars::ErrorCode::NO_FAULT)
         {
-            if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+            RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Joint %s on can_interface %s with can_id %i has error %s", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), can_interfaces_[can_interface_idx]->get_can_id(i), cubemars::errorFlagToString(joint_states[i].device_status));
+            if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE && damping_on_motor_error_)
             {
-                RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, cubemars::errorFlagToString(joint_states[i].status));
+                RCLCPP_ERROR(this->get_logger(), "Deactivating hardware into damping due to error on joint %s", joint_params[i].name.c_str());
                 deactivate();
             }
-            else
-            {
-                RCLCPP_WARN(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) has error %s", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, cubemars::errorFlagToString(joint_states[i].status));
-            }
         }
+        if (joint_states[i].communication_status != cubemars::ComStatus::SUCCESS)
+        {
+            RCLCPP_WARN(this->get_logger(), "Joint %s on can_interface %s with can_id %i has communication issues %s: %s", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), can_interfaces_[can_interface_idx]->get_can_id(i), cubemars::comStatusToString(joint_states[i].communication_status), strerror(joint_states[i].com_errno));
+            can_errors_in_this_cycle++;
+        }
+    }
+
+    if (can_errors_in_this_cycle == 0 && num_can_errors_per_interfaces_[can_interface_idx] > 0)
+    {
+        num_can_errors_per_interfaces_[can_interface_idx] = 0; // Reset counter
+        RCLCPP_INFO(this->get_logger(), "Can interface %s communication with all motors okay again", can_interfaces_[can_interface_idx]->GetName().c_str());
+    }
+    else if ((num_can_errors_per_interfaces_[can_interface_idx] + can_errors_in_this_cycle) >= max_can_errors_before_motor_shutdown_)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Can interface %s exceeded maximum number of CAN errors (%i)", can_interfaces_[can_interface_idx]->GetName().c_str(), max_can_errors_before_motor_shutdown_);
+        if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+        {
+            // Try to go into damping
+            RCLCPP_WARN(this->get_logger(), "For safety reasons deactivate() motors into DAMPING");
+            deactivate();
+            return;
+        }
+        else
+        {
+            // TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons cleanup() motors into OFF (can process %i)", can_interface_idx);
+            cleanup();
+            return;
+        }
+
+        return;
+    }
+    else
+    {
+        num_can_errors_per_interfaces_[can_interface_idx] += can_errors_in_this_cycle;
     }
 
     // Add transmission ratios to joint states
@@ -673,15 +717,17 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
         {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
-                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str());
+                RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
                 can_interfaces_[i]->end_motor_control_mode(j);
+                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
                 can_interfaces_[i]->start_motor_control_mode(j, true);
+                RCLCPP_INFO(this->get_logger(), "Succesfully set orgin and re-activated joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
             }
         }
         catch (const std::exception &e)
         {
             // Notidy users
-            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured: %s", can_interfaces_[i]->GetName().c_str(), e.what());
+            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[i]->GetName().c_str(), e.what());
             // This can only happen when actual motors are enabled, hence try to disable motors
             try
             {
