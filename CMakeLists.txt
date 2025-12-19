@@ -95,6 +95,12 @@ install(TARGETS ${PROJECT_NAME} cubemars_hardware_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/motor_sine_tester.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
 
 if(BUILD_TESTING)
   # find_package(ament_lint_auto REQUIRED)
