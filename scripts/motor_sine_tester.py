@@ -255,6 +255,7 @@ class MotorSineTester(Node):
         self.q_des_log: List[np.ndarray] = []
         self.qd_des_log: List[np.ndarray] = []
         self.tau_cmd_log: List[np.ndarray] = []
+        self.t_meas_log: List[float] = []
         self.q_meas_log: List[np.ndarray] = []
         self.qd_meas_log: List[np.ndarray] = []
         self.tau_meas_log: List[np.ndarray] = []
@@ -287,6 +288,10 @@ class MotorSineTester(Node):
                 f"but expected >= {n}. Ignoring."
             )
             return
+        self.t_meas_log.append(self._now_t())
+        self.q_meas_log.append(msg.position[:n])
+        self.qd_meas_log.append(msg.velocity[:n])
+        self.tau_meas_log.append(msg.effort[:n])   
         self.last_state = msg
 
     def _now_t(self) -> float:
@@ -452,10 +457,6 @@ class MotorSineTester(Node):
         self.qd_des_log.append(qd_des.copy())
         self.tau_cmd_log.append(tau_cmd.copy())
 
-        self.q_meas_log.append(q_meas.copy())
-        self.qd_meas_log.append(qd_meas.copy())
-        self.tau_meas_log.append(tau_meas.copy())
-
     def _finalize_and_plot(self):
         if len(self.t_log) < 2:
             self.get_logger().warn("Not enough data to plot.")
@@ -466,6 +467,7 @@ class MotorSineTester(Node):
         qd_des = np.vstack(self.qd_des_log)
         tau_cmd = np.vstack(self.tau_cmd_log)
 
+        tl = np.vstack(self.t_meas_log)
         q = np.vstack(self.q_meas_log)
         qd = np.vstack(self.qd_meas_log)
         tau = np.vstack(self.tau_meas_log)
@@ -478,43 +480,56 @@ class MotorSineTester(Node):
         import matplotlib.pyplot as plt
 
         for i in range(self.params.n_motors):
-            fig = plt.figure(figsize=(10, 7))
+            fig, axs = plt.subplots(
+                3, 1,
+                sharex=True,
+                figsize=(10, 4.5),  # smaller height
+                constrained_layout=False
+            )
 
-            ax1 = fig.add_subplot(3, 1, 1)
-            ax1.plot(t, q[:, i], label="q_meas")
+            ax1, ax2, ax3 = axs
+
+            # --- Position ---
+            ax1.plot(tl, q[:, i], label="q_meas")
             ax1.plot(t, q_des[:, i], "--", label="q_des")
-            ax1.set_ylabel("Position [rad]")
+            ax1.set_ylabel("Pos [rad]", fontsize=9)
             ax1.grid(True)
-            ax1.legend(loc="best")
+            ax1.legend(loc="upper right", fontsize=8, frameon=False)
 
-            ax2 = fig.add_subplot(3, 1, 2, sharex=ax1)
-            ax2.plot(t, qd[:, i], label="qd_meas")
+            # --- Velocity ---
+            ax2.plot(tl, qd[:, i], label="qd_meas")
             ax2.plot(t, qd_des[:, i], "--", label="qd_des")
-            ax2.set_ylabel("Velocity [rad/s]")
+            ax2.set_ylabel("Vel [rad/s]", fontsize=9)
             ax2.grid(True)
-            ax2.legend(loc="best")
+            ax2.legend(loc="upper right", fontsize=8, frameon=False)
 
-            ax3 = fig.add_subplot(3, 1, 3, sharex=ax1)
-            ax3.plot(t, tau[:, i], label="effort_meas")
+            # --- Effort ---
+            ax3.plot(tl, tau[:, i], label="effort_meas")
             if self.params.mode == "effort_pd":
                 ax3.plot(t, tau_cmd[:, i], "--", label="effort_cmd")
-            ax3.set_ylabel("Effort")
-            ax3.set_xlabel("Time [s]")
+            ax3.set_ylabel("Eff", fontsize=9)
+            ax3.set_xlabel("Time [s]", fontsize=9)
             ax3.grid(True)
-            ax3.legend(loc="best")
+            ax3.legend(loc="upper right", fontsize=8, frameon=False)
 
-            fig.suptitle(f"Motor {i} | mode={self.params.mode} | kp={self.params.kp[i]}, kd={self.params.kd[i]}")
-            fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+            # Make ticks smaller and remove x tick labels on upper plots
+            for ax in axs:
+                ax.tick_params(labelsize=8)
+            ax1.tick_params(labelbottom=False)
+            ax2.tick_params(labelbottom=False)
+
+            # Tighten spacing (this is the "squeeze" knob)
+            fig.subplots_adjust(top=0.90, hspace=0.08)
+
+            fig.suptitle(
+                f"mode={self.params.mode} | kp={self.params.kp[i]:g}, kd={self.params.kd[i]:g}",
+                fontsize=6
+            )
 
             fname = os.path.join(self.params.out_dir, f"motor_{i:02d}_{self.params.mode}.png")
-            fig.savefig(fname, dpi=150)
+            fig.savefig(fname, dpi=200, bbox_inches="tight", pad_inches=0.05)
             plt.close(fig)
 
-        self.get_logger().info(f"Saved plots to: {os.path.abspath(self.params.out_dir)}")
-
-        if self.params.show_plots:
-            import matplotlib.pyplot as plt
-            plt.show()
 
     # ---------------- Timer loop ----------------
     def _on_timer(self):
