@@ -16,6 +16,8 @@ from robot_control_msgs.msg import JointCommand, JointState
 from lifecycle_msgs.srv import ChangeState, GetState
 from lifecycle_msgs.msg import Transition, State
 
+JOINT_ID = 0
+
 # Used to read the PID by other programs.
 PID_FILE = "/home/testbench/odrive/python_cubemars/ake90-8/cubemars_control_ake90.pid"
 
@@ -73,7 +75,7 @@ def rad_s_to_turns_s(rad_s):
 # -------------------------
 
 # Gear ratio: motor_speed = output_speed * GEAR_RATIO
-GEAR_RATIO = 8
+GEAR_RATIO = 2 * math.pi # To have rad/s * 60/GEAR_RATIO results in rad/s to rpm conversion
 
 # Max velocity in *output shaft rpm* 
 MAX_RPM = 30.0
@@ -164,19 +166,34 @@ class CubemarsController(Node):
     def __init__(self, drive_id=None):
         super().__init__('CubemarsMotorTestNode')
 
+        self.target_node = "/cubemars_hardware_node"
+
+        self.change_state_client = self.create_client(
+            ChangeState,
+            f'{self.target_node}/change_state'
+        )
+
+        self.get_state_client = self.create_client(
+            GetState,
+            f'{self.target_node}/get_state'
+        )
+
+        self.wait_for_services()
+
         self.state_msg = JointState()
+        self.cmd_msg = JointCommand()
         
         def sub_callback(msg):
             self.state_msg = msg
 
         self.publisher_ = self.create_publisher(
             JointCommand,
-            '/cubemars_hardware_node/joint_commands',
+            f'{self.target_node}/joint_commands',
             10)
 
         self.subscription = self.create_subscription(
             JointState,
-            '/cubemars_hardware_node/ros2_joint_state',
+            f'{self.target_node}/ros2_joint_state',
             sub_callback,
             10)
         
@@ -205,6 +222,58 @@ class CubemarsController(Node):
         # Single-step (NUM_REF_VEL_STEPS == 1) helper state
         self._single_phase = "idle"     # "idle", "ramp_up", "hold"
         self._single_start_time = 0.0   # phase start time
+
+    # ---------------- Lifecycle stuff -----------------
+    def _wait_for_services(self):
+        self.get_logger().info('Waiting for lifecycle services...')
+        self.change_state_client.wait_for_service()
+        self.get_state_client.wait_for_service()
+
+    def _get_state(self):
+        request = GetState.Request()
+        future = self.get_state_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+        return future.result().current_state.label
+
+    def _change_state(self, transition_id):
+        request = ChangeState.Request()
+        request.transition.id = transition_id
+
+        future = self.change_state_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future)
+
+        return future.result().success
+    
+    def _bringup_to_state(self, until: str="unconfigured"):
+        while rclpy.ok():
+            state = self._get_state()
+            self.get_logger().info(f'Current state: {state}')
+            if until == state:
+                return True
+            if state == 'unconfigured':
+                self.get_logger().info('Configuring...')
+                if not self._change_state(Transition.TRANSITION_CONFIGURE):
+                    self.get_logger().error('Failed to configure')
+                    return False
+
+            elif state == 'inactive':
+                self.get_logger().info('Activating...')
+                if not self._change_state(Transition.TRANSITION_ACTIVATE):
+                    self.get_logger().error('Failed to activate')
+                    return False
+
+            elif state == 'active':
+                self.get_logger().info('Cubemars Controller is active')
+                return True
+
+            elif state == 'finalized':
+                self.get_logger().error('Cubemars Controller  is finalized')
+                return False
+
+            else:
+                # configuring / activating / deactivating / error_processing
+                self.get_logger().info('Waiting for transition...')
+                rclpy.spin_once(self, timeout_sec=0.2)
 
     # ---------------- Trajectory setup ----------------
 
@@ -282,9 +351,9 @@ class CubemarsController(Node):
 
         self._setup_velocity_profile()
 
-        if not self._apply_and_save_config():
-            logging.critical("Initial configuration failed. Exiting.")
-            sys.exit(1)
+        # if not self._bringup_to_state():
+        #     logging.critical("Initial configuration failed. Exiting.")
+        #     sys.exit(1)
 
         self.t_start = time.monotonic()
         logging.info("--- PHASE 3: Starting Control Loop ---")
@@ -526,8 +595,16 @@ class CubemarsController(Node):
         # Command current step velocity (within step hold window)
         cmd_vel_ts_motor = self.ref_vels_ts[self.idx_ref_vel]
         try:
-            self.axis.controller.config.input_mode = InputMode.PASSTHROUGH
-            self.axis.controller.input_vel = cmd_vel_ts_motor
+            # Disable position control
+            self.cmd_msg.position[JOINT_ID] = 0.
+            self.cmd_msg.kp[JOINT_ID] = 0.
+
+            self.cmd_msg.velocity[JOINT_ID] = cmd_vel_ts_motor
+            self.cmd_msg.acceleration[JOINT_ID] = 0.
+            self.cmd_msg.kp[JOINT_ID] = 1.
+
+            # Additional effort
+            self.cmd_msg.effort[JOINT_ID] = 0.
         except Exception:
             pass
 
@@ -539,9 +616,9 @@ class CubemarsController(Node):
             return
 
         try:
-            measured_pos = self.axis.pos_estimate
-            measured_vel_ts_motor = self.axis.vel_estimate
-            cmd_vel_ts_motor = self.axis.controller.input_vel
+            measured_pos = self.state_msg.position[JOINT_ID]
+            measured_vel_ts_motor = self.state_msg.velocity[JOINT_ID]
+            cmd_vel_ts_motor = self.cmd_msg.velocity[JOINT_ID]
 
             Iq_measured = self.axis.motor.foc.Iq_measured
             Kt = self.axis.config.motor.torque_constant
@@ -551,12 +628,14 @@ class CubemarsController(Node):
             cmd_vel_rpm_out = cmd_vel_ts_motor * 60.0 / GEAR_RATIO
             measured_vel_rpm_out = measured_vel_ts_motor * 60.0 / GEAR_RATIO
 
+
+            # TODO: Check if we can get temp (motor interface dont provide it)
             temp_fet = float("nan")
             temp_motor = float("nan")
-            try:
-                temp_fet = self.my_drive.fet_thermistor.temperature
-            except Exception:
-                pass
+            # try:
+            #     temp_fet = self.my_drive.fet_thermistor.temperature
+            # except Exception:
+            #     pass
             try:
                 temp_motor = self.axis.motor.motor_thermistor.temperature
             except Exception:
@@ -587,7 +666,7 @@ class CubemarsController(Node):
     # ---------------- Shutdown ----------------
 
     def _safe_shutdown(self):
-        logging.warning("Initiating ODrive shutdown procedure (AxisState.IDLE).")
+        logging.warning("Initiating Cubemars shutdown procedure (AxisState.IDLE).")
         if self.axis:
             try:
                 self.axis.controller.input_vel = 0.0
@@ -619,7 +698,7 @@ if __name__ == "__main__":
         logging.error(f"Failed to write PID file {PID_FILE}: {e}")
 
     controller = None
-    rclpy.init(args=args)
+    rclpy.init()
     try:
         # controller = ODriveMotionController()
         # controller.run_controller()
@@ -635,7 +714,8 @@ if __name__ == "__main__":
         logging.critical(f"Unhandled exception in main process: {e}")
         try:
             if controller and controller.my_drive:
-                dump_errors(controller.my_drive)
+                # dump_errors(controller.my_drive)
+                ...
         except Exception:
             pass
 

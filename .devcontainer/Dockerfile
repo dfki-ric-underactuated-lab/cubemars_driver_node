@@ -26,4 +26,4 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.bash && colcon build --symlink-install
 #     colcon build;
 
 # Add sourcing ROS setup.bash to .bashrc
-RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrcx
+RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc

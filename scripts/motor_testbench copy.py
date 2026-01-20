@@ -1,20 +1,13 @@
 import os
+import odrive
+from odrive.enums import *
+from odrive.utils import dump_errors
 import time
 import math
 import signal
 import sys
 import logging
 import csv
-
-
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-
-from robot_control_msgs.msg import JointCommand, JointState
-
-from lifecycle_msgs.srv import ChangeState, GetState
-from lifecycle_msgs.msg import Transition, State
 
 # Used to read the PID by other programs.
 PID_FILE = "/home/testbench/odrive/python_odrive/ake90-8/specimen_control_ake90.pid"

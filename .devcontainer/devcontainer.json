@@ -29,14 +29,10 @@
         "vscode": {
             "settings": {},
             "extensions": [
-                "mhutchie.git-graph",
-                // "eamodio.gitlens",
-                // "donjayamanne.githistory",
-                // "ms-python.vscode-pylance",
-                // "ms-python.python"
-				// "ms-vscode.cpptools",
-				// "ms-vscode.cpptools-extension-pack"
-              ]
+				"mhutchie.git-graph",
+				"ms-python.vscode-pylance",
+				"ms-python.debugpy"
+			]
         }
     },
     "postCreateCommand": "colcon build"
