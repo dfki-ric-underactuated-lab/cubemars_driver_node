@@ -682,12 +682,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
                 RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) violated min position limit (%f < %f) - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, joint_state_msg_.position[joint_params[i].msg_idx], joint_params[i].pos_limit_min);
                 joint_state_msg_mutex_.unlock_shared();
                 deactivate();
+                return;
             }
             if (joint_state_msg_.position[joint_params[i].msg_idx] > joint_params[i].pos_limit_max)
             {
                 RCLCPP_ERROR(this->get_logger(), "Joint %s on can_interface %s (msg idx %i) violated max position limit (%f > %f) - deactivating (damping)", joint_params[i].name.c_str(), can_interfaces_[can_interface_idx]->GetName().c_str(), joint_params[i].msg_idx, joint_state_msg_.position[joint_params[i].msg_idx], joint_params[i].pos_limit_max);
                 joint_state_msg_mutex_.unlock_shared();
                 deactivate();
+                return;
             }
         }
     }
