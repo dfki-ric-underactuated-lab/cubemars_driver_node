@@ -1,11 +1,12 @@
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include <iostream>
 
-cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec) : can_interface_(can_interface),
+cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials) : can_interface_(can_interface),
                                                                                                                                                                                                                       enable_loopback_(enable_loopback),
                                                                                                                                                                                                                       joint_configs_(joint_configs),
                                                                                                                                                                                                                       socket_timeout_sec_(socket_timeout_sec),
                                                                                                                                                                                                                       socket_timeout_usec_(socket_timeout_usec),
+                                                                                                                                                                                                                      max_initial_connection_trials_(max_init_connect_trials),
                                                                                                                                                                                                                       send_ok_(joint_configs_.size()),
                                                                                                                                                                                                                       recv_ok_(joint_configs_.size())
 {
@@ -343,10 +344,9 @@ void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id, bool
     // The v3 motors can (on power disconnect while being active, i.e. the emergency stop case) get stuck in their response. To ommit this they need a few read cycles toget active again, this we will do here
     if(joint_configs_[joint_id].series_type == V3){
         unsigned int trial = 0;
-        unsigned int max_trials = 2;
         bool success = false;
         std::string error_msg = "";
-        while(!success && trial++ < max_trials){
+        while(!success && trial++ < max_initial_connection_trials_){
             try
             {
                 send_control_frameV3<4>(joint_configs_[joint_id].can_id, CAN_PACKET_SET_CURRENT, {0x00, 0x00, 0x00, 0x00}); // Zero current command
@@ -359,7 +359,7 @@ void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id, bool
 
         }
         if(!success){
-            throw cubemars::can_device_error(std::format("Failed to enable motor with can id {} on interface {}, after {} trials. Failures where:\n {}", joint_configs_[joint_id].can_id, can_interface_, max_trials, error_msg));
+            throw cubemars::can_device_error(std::format("Failed to enable motor with can id {} on interface {}, after {} trials. Failures where:\n {}", joint_configs_[joint_id].can_id, can_interface_, max_initial_connection_trials_, error_msg));
         }
     
     }

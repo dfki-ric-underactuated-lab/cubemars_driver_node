@@ -46,7 +46,7 @@ namespace cubemars
     class CubemarsCan
     {
     public:
-        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec);
+        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials);
         void start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable);
         void end_motor_control_mode(unsigned int joint_id);
         void start_motor_control_mode(bool set_zero_postion_on_enable);
@@ -72,6 +72,7 @@ namespace cubemars
         std::vector<joint_config_t> joint_configs_;
         long socket_timeout_sec_;
         long socket_timeout_usec_;
+        unsigned int max_initial_connection_trials_;
         std::vector<bool> send_ok_;
         std::vector<bool> recv_ok_;
         int can_socket_fd_;

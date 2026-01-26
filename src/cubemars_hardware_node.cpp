@@ -18,6 +18,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("publish_ros2_joint_state", false);
     this->declare_parameter_if_undeclared("damping_on_motor_error", true);
     this->declare_parameter_if_undeclared("max_can_errors_before_motor_shutdown", 1);
+    this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -176,7 +177,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 this->get_parameter("enable_loopback").as_bool(),
                 joint_configs_per_can_interface[can_interface_id],
                 this->get_parameter("can_socket_timeout_sec").as_int(),
-                this->get_parameter("can_socket_timeout_usec").as_int());
+                this->get_parameter("can_socket_timeout_usec").as_int(),
+                this->get_parameter("can_initial_connection_trials").as_int()
+            );
         }
 
         // Goes to default callback group
