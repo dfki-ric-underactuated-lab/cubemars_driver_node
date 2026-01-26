@@ -79,6 +79,7 @@ private:
     double default_damping_KD_;
     double friction_compensation_sign_steepness_;
     unsigned int num_joints_;
+    unsigned int joint_msg_length_;
 
     std::set<std::string> can_interfaces_names_; // This determines the order
     std::vector<std::vector<cubemars::joint_cmd_t>> joint_commands_per_can_interface_;

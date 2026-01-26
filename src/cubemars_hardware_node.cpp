@@ -100,6 +100,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 return LifecycleNodeInterface::CallbackReturn::FAILURE;
             }
         }
+        joint_msg_length_ = max_msg_idx + 1;
         num_joints_ = joint_names.size();
         // Create joint configs per can interfaces and create state and message mapping
         unsigned int num_can_interfaces = can_interfaces_names_.size();
@@ -469,13 +470,13 @@ void CubeMarsHardwareNode::watchdog_timer_callback()
 void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand &joint_cmd_msg)
 {
 
-    if (joint_cmd_msg.position.size() != num_joints_ ||
-        joint_cmd_msg.velocity.size() != num_joints_ ||
-        joint_cmd_msg.effort.size() != num_joints_ ||
-        joint_cmd_msg.kp.size() != num_joints_ ||
-        joint_cmd_msg.kd.size() != num_joints_)
+    if (joint_cmd_msg.position.size() != joint_msg_length_ ||
+        joint_cmd_msg.velocity.size() != joint_msg_length_ ||
+        joint_cmd_msg.effort.size() != joint_msg_length_ ||
+        joint_cmd_msg.kp.size() != joint_msg_length_ ||
+        joint_cmd_msg.kd.size() != joint_msg_length_)
     {
-        RCLCPP_ERROR(this->get_logger(), "Received joint_cmd_msg with array sizes unequal to %i, skipping this message", num_joints_);
+        RCLCPP_ERROR(this->get_logger(), "Received joint_cmd_msg with array sizes unequal to %i, skipping this message", joint_msg_length_);
         return;
     }
 
