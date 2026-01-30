@@ -1,3 +1,5 @@
+#!/bin/env python3
+
 import os
 import threading
 import time
@@ -26,7 +28,7 @@ JOINT_ID = 0
 TORQUE_CONSTANT=1.1314 # AK10-9 v3
 
 # Used to read the PID by other programs.
-PID_FILE = "/home/testbench/odrive/python_cubemars/ake90-8/cubemars_control_ake90.pid"
+PID_FILE = "/tmp/cubemars_testbench.pid"
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -257,6 +259,10 @@ class CubemarsController():
         self._single_phase = "idle"     # "idle", "ramp_up", "hold"
         self._single_start_time = 0.0   # phase start time
 
+        self.node.get_logger().info('ROS2 Node Creation completed')
+
+
+
     # ---------------- Lifecycle stuff -----------------
     def _wait_for_services(self):
         self.node.get_logger().info('Waiting for lifecycle services...')
@@ -266,7 +272,7 @@ class CubemarsController():
     def _get_state(self):
         request = GetState.Request()
         future = self.get_state_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
+        rclpy.spin_until_future_complete(self.node, future)
         return future.result().current_state.label
 
     def _change_state(self, transition_id):
@@ -274,11 +280,11 @@ class CubemarsController():
         request.transition.id = transition_id
 
         future = self.change_state_client.call_async(request)
-        rclpy.spin_until_future_complete(self, future)
+        rclpy.spin_until_future_complete(self.node, future)
 
         return future.result().success
     
-    def _bringup_to_state(self, until: str="unconfigured"):
+    def bringup_to_state(self, until: str="unconfigured"):
         while rclpy.ok():
             state = self._get_state()
             self.node.get_logger().info(f'Current state: {state}')
@@ -412,7 +418,7 @@ class CubemarsController():
                     self.state = MyState.END
 
                 if self.state == MyState.WAIT_CONF:
-                    if self._bringup_to_state("inactive"):
+                    if self.bringup_to_state("inactive"):
                         self.state = MyState.PREPARE
                         logging.info("State change: WAIT_CONF -> PREPARE")
 
@@ -427,7 +433,7 @@ class CubemarsController():
                     self.state = MyState.TRAJ'''
 
                 elif self.state == MyState.WAIT_EN:
-                    if self._bringup_to_state("active"):
+                    if self.bringup_to_state("active"):
                         self.cmd_msg.velocity[JOINT_ID] = 0.0
                         self.cmd_msg.torque[JOINT_ID] = 0.0
                         self.t_step_start = time.monotonic()
@@ -713,7 +719,7 @@ class CubemarsController():
 
     def _safe_shutdown(self):
         logging.warning("Initiating Cubemars shutdown procedure (AxisState.IDLE).")
-        self._bringup_to_state("unconfigured")
+        self.bringup_to_state("unconfigured")
         
         logging.info("Controller process finished.")
 
@@ -733,11 +739,12 @@ if __name__ == "__main__":
 
     controller = None
     rclpy.init()
+    controller = CubemarsController()
+    controller.bringup_to_state("configured")
     try:
+        rclpy.spin(controller.node)
         # controller = ODriveMotionController()
         # controller.run_controller()
-        controller = CubemarsController()
-        rclpy.spin(controller)
 
     except KeyboardInterrupt:
         # Just set global_interrupted; run_controller loop will see it and shut down cleanly
