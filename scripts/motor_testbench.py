@@ -188,6 +188,8 @@ class CubemarsController():
             GetState,
             f'{self.target_node}/get_state'
         )
+        
+        self.timer = self.node.create_timer(0.002, self.timer_callback)
 
         self._wait_for_services()
 
@@ -204,7 +206,7 @@ class CubemarsController():
         self.cmd_msg.kp = [0.]
         self.cmd_msg.velocity = [0.]
         self.cmd_msg.acceleration = [0.]
-        self.cmd_msg.kp = [0.]
+        self.cmd_msg.kd = [0.]
         self.cmd_msg.effort = [0.]
         
         def state_callback(msg):
@@ -236,6 +238,11 @@ class CubemarsController():
         
         self.subscription  # prevent unused variable warning
 
+        def executor_loop():
+            self.executor.spin()
+        
+        self.thread = threading.Thread(target = executor_loop)
+
         self.state = MyState.WAIT_CONF
         self.my_drive = None
         self.drive_id = drive_id
@@ -261,6 +268,8 @@ class CubemarsController():
 
         self.node.get_logger().info('ROS2 Node Creation completed')
 
+    def timer_callback(self):
+        self.publisher_.publish(self.cmd_msg)
 
 
     # ---------------- Lifecycle stuff -----------------
@@ -393,6 +402,8 @@ class CubemarsController():
 
     def run_controller(self):
         global global_interrupted, global_run
+
+        self.thread.start()
 
         self._setup_velocity_profile()
 
@@ -655,7 +666,6 @@ class CubemarsController():
 
             # Additional effort
             self.cmd_msg.effort[JOINT_ID] = 0.
-            self.publisher_.publish(self.cmd_msg)
 
         except Exception:
             pass
@@ -720,6 +730,8 @@ class CubemarsController():
     def _safe_shutdown(self):
         logging.warning("Initiating Cubemars shutdown procedure (AxisState.IDLE).")
         self.bringup_to_state("unconfigured")
+
+        self.thread.join()
         
         logging.info("Controller process finished.")
 
