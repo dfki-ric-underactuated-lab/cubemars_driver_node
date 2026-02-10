@@ -66,6 +66,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".zero_position", 0.0);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".pos_limit_min", std::numeric_limits<double>::lowest());
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".pos_limit_max", std::numeric_limits<double>::max());
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".vel_filter_size", 0);
 
             // Validate joint defintions
             auto can_interface_name = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
@@ -108,6 +109,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_commands_per_can_interface_.resize(num_can_interfaces);
         joint_states_per_can_interface_.resize(num_can_interfaces);
         joint_parameters_per_can_interface_.resize(num_can_interfaces);
+        joint_vel_filters_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
         num_can_errors_per_interfaces_.resize(num_can_interfaces, 0);
         can_interfaces_.resize(num_can_interfaces);
@@ -146,6 +148,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             auto msg_idx = this->get_parameter("joint_defintions." + joint_names[i] + ".msg_idx").as_int();
             auto can_interface = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface));
+            unsigned int vel_filter_size = this->get_parameter("joint_defintions." + joint_names[i] + ".vel_filter_size").as_int();
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
             joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0});
@@ -158,10 +161,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".k").as_double(),
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".k_a").as_double(),
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()},
+                                                                                vel_filter_size,
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".zero_position").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure").as_bool(),
                                                                              static_cast<unsigned int>(msg_idx),
                                                                              joint_names[i]});
+            joint_vel_filters_per_can_interface_[can_interface_id].push_back(joint_parameters_per_can_interface_[can_interface_id].back().vel_filter_size);
 
             if (ros2_joint_state_pub_)
             {
@@ -303,6 +308,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
 
     joint_parameters_per_can_interface_.clear();
+    joint_vel_filters_per_can_interface_.clear();
     num_can_errors_per_interfaces_.clear();
     joint_states_per_can_interface_.clear();
     joint_commands_per_can_interface_.clear();
@@ -429,6 +435,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_commands_per_can_interface_.clear();
         num_can_errors_per_interfaces_.clear();
         joint_parameters_per_can_interface_.clear();
+        joint_vel_filters_per_can_interface_.clear();
         set_all_motors_origin_here_srv_.reset();
         if (publish_ros2_joint_state_)
         {
@@ -651,6 +658,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         num_can_errors_per_interfaces_[can_interface_idx] += can_errors_in_this_cycle;
     }
 
+    for(unsigned int i = 0; i < joint_states.size(); i++)
+    {
+        // Filter velocity
+        if(joint_parameters_per_can_interface_[can_interface_idx][i].vel_filter_size > 1){
+            joint_states[i].vel = joint_vel_filters_per_can_interface_[i][i].update(joint_states[i].vel);
+        }
+    }
+
     // Add transmission ratios to joint states
     for (unsigned int i = 0; i < joint_states.size(); i++)
     {
@@ -694,6 +709,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             }
         }
     }
+
+    
 
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
     joint_state_msg_mutex_.unlock_shared();

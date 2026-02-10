@@ -12,6 +12,7 @@
 #include <shared_mutex>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "std_srvs/srv/trigger.hpp"
+#include "cubemars_hardware_interface/filters.hpp"
 
 using namespace rclcpp_lifecycle::node_interfaces;
 
@@ -38,6 +39,7 @@ public:
         double pos_limit_max;
         double transmission_ratio;
         FrictionParameters friction_parameters;
+        unsigned int vel_filter_size;
         double zero_position;
         bool set_zero_position_on_startup;
         unsigned int msg_idx;
@@ -90,6 +92,7 @@ private:
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
+    std::vector<std::vector<MovingAverage<double>>> joint_vel_filters_per_can_interface_;
 
     template <typename T>
     T declare_and_get_parameter(const std::string &name)
