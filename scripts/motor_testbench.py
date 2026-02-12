@@ -445,8 +445,14 @@ class CubemarsController():
 
                 elif self.state == MyState.WAIT_EN:
                     if self.bringup_to_state("active"):
-                        self.cmd_msg.velocity[JOINT_ID] = 0.0
-                        self.cmd_msg.torque[JOINT_ID] = 0.0
+                        self.cmd_msg.position[JOINT_ID] = 0.
+                        self.cmd_msg.kp[JOINT_ID] = 0.
+
+                        self.cmd_msg.velocity[JOINT_ID] = 0.
+                        self.cmd_msg.acceleration[JOINT_ID] = 0.
+                        self.cmd_msg.kd[JOINT_ID] = 0.
+                        self.cmd_msg.effort[JOINT_ID] = 0.
+
                         self.t_step_start = time.monotonic()
                         self.state = MyState.TRAJ
                         logging.info("State change: WAIT_EN -> TRAJ. Motor enabled.")
@@ -498,7 +504,13 @@ class CubemarsController():
         if not global_run:
             # Ensure motor commanded to zero while paused
             try:
-                self.cmd_msg.velocity[JOINT_ID] = 0.0
+                self.cmd_msg.position[JOINT_ID] = 0.
+                self.cmd_msg.kp[JOINT_ID] = 0.
+
+                self.cmd_msg.velocity[JOINT_ID] = 0.
+                self.cmd_msg.acceleration[JOINT_ID] = 0.
+                self.cmd_msg.kd[JOINT_ID] = 0.
+                self.cmd_msg.effort[JOINT_ID] = 0.
             except Exception:
                 pass
 
@@ -538,6 +550,7 @@ class CubemarsController():
             if elapsed >= SECS_PER_VEL_STEP:
                 try:
                     self.cmd_msg.velocity[JOINT_ID] = 0.0
+                    self.cmd_msg.kd[JOINT_ID] = 0.
                 except Exception:
                     pass
 
@@ -580,11 +593,8 @@ class CubemarsController():
                     cmd_ts = target_ts
 
             # Apply command
-            try:
-                # TODO: setup gains and torque
-                self.cmd_msg.velocity[JOINT_ID] = cmd_ts
-            except Exception:
-                pass
+            self.cmd_msg.velocity[JOINT_ID] = cmd_ts # TODO: check if this is in rad/s
+            self.cmd_msg.kd[JOINT_ID] = 1.
 
             return
 
@@ -630,10 +640,14 @@ class CubemarsController():
 
                 if RAMP_REPEAT > 0 and self._cycle_count >= RAMP_REPEAT:
                     # After last cycle: stop and PAUSE, not exit.
-                    try:
-                        self.cmd_msg.velocity[JOINT_ID] = 0.0
-                    except Exception:
-                        pass
+                    self.cmd_msg.position[JOINT_ID] = 0.
+                    self.cmd_msg.kp[JOINT_ID] = 0.
+
+                    self.cmd_msg.velocity[JOINT_ID] = 0.
+                    self.cmd_msg.acceleration[JOINT_ID] = 0.
+                    self.cmd_msg.kd[JOINT_ID] = 0.
+                    self.cmd_msg.effort[JOINT_ID] = 0.
+
                     global_run = False
                     self._was_running = False
                     logging.info(
@@ -662,7 +676,7 @@ class CubemarsController():
 
             self.cmd_msg.velocity[JOINT_ID] = cmd_vel_ts_motor
             self.cmd_msg.acceleration[JOINT_ID] = 0.
-            self.cmd_msg.kp[JOINT_ID] = 1.
+            self.cmd_msg.kd[JOINT_ID] = 1.
 
             # Additional effort
             self.cmd_msg.effort[JOINT_ID] = 0.
