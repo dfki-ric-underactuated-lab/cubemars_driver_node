@@ -24,11 +24,13 @@ from lifecycle_msgs.msg import Transition, State
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 
+#TODO: Change turns per second with rad/s
+
 JOINT_ID = 0
 TORQUE_CONSTANT=1.1314 # AK10-9 v3
 
 # Used to read the PID by other programs.
-PID_FILE = "/tmp/cubemars_testbench.pid"
+PID_FILE = "/tmp/hilscher.pid"
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -593,7 +595,7 @@ class CubemarsController():
                     cmd_ts = target_ts
 
             # Apply command
-            self.cmd_msg.velocity[JOINT_ID] = cmd_ts # TODO: check if this is in rad/s
+            self.cmd_msg.velocity[JOINT_ID] = cmd_ts * 2.0 * math.pi
             self.cmd_msg.kd[JOINT_ID] = 1.
 
             return
@@ -674,7 +676,7 @@ class CubemarsController():
             self.cmd_msg.position[JOINT_ID] = 0.
             self.cmd_msg.kp[JOINT_ID] = 0.
 
-            self.cmd_msg.velocity[JOINT_ID] = cmd_vel_ts_motor
+            self.cmd_msg.velocity[JOINT_ID] = step_rpm_out * (2 * math.pi)
             self.cmd_msg.acceleration[JOINT_ID] = 0.
             self.cmd_msg.kd[JOINT_ID] = 1.
 
@@ -696,13 +698,12 @@ class CubemarsController():
             measured_vel_ts_motor = self.state_msg.velocity[JOINT_ID]
             cmd_vel_ts_motor = self.cmd_msg.velocity[JOINT_ID]
 
-            Iq_measured = 1 # TODO: Find out what this is
-            Kt = TORQUE_CONSTANT
-            tau_meas_Nm = Iq_measured * Kt
+            Iq_measured = 0 # TODO: Find out what this is
+            tau_meas_Nm = self.cmd_msg.effort[JOINT_ID]
 
             # Convert motor turns/s -> output rpm for logging
-            cmd_vel_rpm_out = cmd_vel_ts_motor * 60.0 / GEAR_RATIO
-            measured_vel_rpm_out = measured_vel_ts_motor * 60.0 / GEAR_RATIO
+            cmd_vel_rpm_out = cmd_vel_ts_motor / (2 * math.pi)
+            measured_vel_rpm_out = measured_vel_ts_motor / (2 * math.pi)
 
 
             # TODO: Check if we can get temp (motor interface dont provide it)

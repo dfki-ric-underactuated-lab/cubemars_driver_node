@@ -10,7 +10,7 @@ import logging
 import csv
 
 # Used to read the PID by other programs.
-PID_FILE = "/home/testbench/odrive/python_odrive/ake90-8/specimen_control_ake90.pid"
+PID_FILE = "/tmp/hilscher.pid" #"/home/testbench/odrive/python_odrive/ake90-8/specimen_control_ake90.pid"
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -26,7 +26,7 @@ def signal_handler(sig, frame):
     if sig == signal.SIGUSR2:
         # SIGUSR2 -> Pause/Stop the trajectory
         global_run = False
-        logging.info("SIGUSR2 received: Trajectory Paused.")
+        logging.info("SIGUSR2 received: Trajectory Stopped.")
         return
     if sig == signal.SIGUSR1:
         # SIGUSR1 -> Start/Resume the trajectory
@@ -36,12 +36,12 @@ def signal_handler(sig, frame):
     if sig == signal.SIGRTMIN:
         # To start recording data into CSV file
         logging.info("SIGRTMIN received : START CSV recording.")
-        controller.logging_enabled = True
+        controller.start_logging()
         return
     if sig == signal.SIGRTMIN + 1:
         # To stop recording data into csv file
         logging.info("SIGRTMIN+1 received : STOP CSV recording")
-        controller.logging_enabled = False
+        controller.stop_logging()
         return
 
     # SIGINT (Ctrl+C) or SIGTERM -> Controlled shutdown and program exit
@@ -118,7 +118,7 @@ def print_user_configuration():
     logging.info(f"Ramp repeat count (RAMP_REPEAT): {RAMP_REPEAT}")
 
     logging.info("Single-step mode parameters (if applicable):")
-    logging.info(f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): {SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm")
+    logging.info(f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): {SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s")
     logging.info("========================================")
 
 def validate_single_step_ramp():
@@ -264,8 +264,11 @@ class ODriveMotionController:
                 self.ref_vels_ts.append(vel_ts_motor)
 
         max_rpm_output = REF_VEL_MAX_TURNS_S * 60.0 / GEAR_RATIO
+
+        num_effective_steps = max(0, len(self.ref_vels_ts) - 1)
+
         logging.info(
-            f"Generated {len(self.ref_vels_ts)} velocity steps "
+            f"Generated {num_effective_steps} velocity steps "
             f"(Max output: {max_rpm_output:.2f} rpm)."
         )
 
@@ -275,43 +278,59 @@ class ODriveMotionController:
 
     # ---------------- CSV logging ----------------
 
+    def start_logging(self):
+        if self.data_file is not None:
+            return  # already logging
+
+        start_label = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        filename = f"/home/testbench/mtb-data/{start_label}_OdriveData_ake90.csv"
+
+        self.data_file = open(filename, 'w', newline='')
+        self.csv_writer = csv.writer(self.data_file)
+
+        self.csv_writer.writerow([
+            "Time",
+            "Torque",
+            "Speed",
+            "Current",
+            "Temperature",
+            "Ref_Torque",
+            "Ref_Velocity"
+        ])
+        self.data_file.flush()
+
+        logging.info(f"CSV recording STARTED: {filename}")
+        self.logging_enabled = True
+
+
+    def stop_logging(self):
+        if self.data_file:
+            self.data_file.flush()
+            self.data_file.close()
+            self.data_file = None
+            self.csv_writer = None
+
+            logging.info("CSV recording STOPPED (file closed)")
+
+        self.logging_enabled = False
+
+
     def _log_data(self, cmd_vel_rpm_out, measured_pos, measured_vel_rpm_out,
                   tau_meas_Nm, Iq_measured,  temp_fet, temp_motor):
+        
+        if self.csv_writer is None:
+            return
+
         t_unix = time.time()
-
-        if not self.data_file:
-            start_label = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-            filename = f"/home/testbench/mtb-data/{start_label}_OdriveData_ake90.csv"
-
-            try:
-                self.data_file = open(filename, 'w', newline='')
-            except Exception as e:
-                logging.error(f"Failed to open log file {filename}: {e}")
-                raise
-
-            self.csv_writer = csv.writer(self.data_file)
-            self.csv_writer.writerow([
-                "time_unix_s",
-                "Measured_Torque(Nm)",
-                "Measured_Velocity_output(rpm)",
-                "Current_Measured (A)",
-                "Command_Velocity_output(rpm)",
-                "Command_Torque(A)",
-                "Measured_Position(turns)",
-                "Motor_Temperature(°C)"
-            ])
-            self.data_file.flush()
-            logging.info(f"Logging to {filename}")
 
         self.csv_writer.writerow([
             f"{t_unix:.6f}",
             f"{tau_meas_Nm:.3f}",
             f"{measured_vel_rpm_out:.3f}",
             f"{Iq_measured:.3f}",
-            f"{cmd_vel_rpm_out:.3f}",
-            f"{0.0:.3f}",
-            f"{measured_pos:.3f}",
             f"{temp_motor:.1f}",
+            f"{0.0:.3f}",
+            f"{cmd_vel_rpm_out:.3f}"
         ])
         self.data_file.flush()
 
@@ -329,8 +348,9 @@ class ODriveMotionController:
         self.t_start = time.monotonic()
         logging.info("--- PHASE 3: Starting Control Loop ---")
 
-        self.log_count = 0
-        self.log_last_time = time.time()
+        #To know the frequency of logging data
+        #self.log_count = 0
+        #self.log_last_time = time.time()
 
         while global_interrupted == 0:
             try:
@@ -352,6 +372,9 @@ class ODriveMotionController:
                     '''logging.warning("TEST MODE: Skipping CLOSED_LOOP_CONTROL (motor stays IDLE)")
                     self.t_step_start = time.monotonic()
                     self.state = MyState.TRAJ'''
+
+                    print_user_configuration()
+                    validate_single_step_ramp()
 
                 elif self.state == MyState.WAIT_EN:
                     if self.axis.current_state == AxisState.CLOSED_LOOP_CONTROL:
@@ -574,7 +597,7 @@ class ODriveMotionController:
     # ---------------- Logging of current state ----------------
 
     def _log_and_monitor(self):
-        if not self.logging_enabled:
+        if not self.logging_enabled or self.csv_writer is None:
             # Do not log until first SIGUSR1
             return
 
@@ -612,14 +635,15 @@ class ODriveMotionController:
                 temp_motor
             )
 
-            self.log_count += 1
-            now = time.time()
-            elapsed = now - self.log_last_time
-            if elapsed >= 10.0:
-                rate_hz = self.log_count / elapsed
-                logging.info(f"Actual logging rate: {rate_hz:.2f} Hz")
-                self.log_count = 0
-                self.log_last_time = now
+            #To know the frequency of logging data
+            #self.log_count += 1
+            #now = time.time()
+            #elapsed = now - self.log_last_time
+            #if elapsed >= 10.0:
+                #rate_hz = self.log_count / elapsed
+                #logging.info(f"Actual logging rate: {rate_hz:.2f} Hz")
+                #self.log_count = 0
+                #self.log_last_time = now
 
         except Exception as e:
             logging.warning(f"Non-fatal error in _log_and_monitor: {e}")
@@ -648,8 +672,8 @@ class ODriveMotionController:
 
 if __name__ == "__main__":
 
-    print_user_configuration()
-    validate_single_step_ramp()
+    #print_user_configuration() ----------- both placed in run_controller() to print in terminal at the last
+    #validate_single_step_ramp()
 
     # Write PID to file so the C program can find and delete the file once the process is done.
     try:
