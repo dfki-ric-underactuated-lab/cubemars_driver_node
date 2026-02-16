@@ -661,8 +661,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     for(unsigned int i = 0; i < joint_states.size(); i++)
     {
         // Filter velocity
-        if(joint_parameters_per_can_interface_[can_interface_idx][i].vel_filter_size > 1){
-            joint_states[i].vel = joint_vel_filters_per_can_interface_[i][i].update(joint_states[i].vel);
+        if(joint_params[i].vel_filter_size > 1){
+            joint_states[i].vel = joint_vel_filters_per_can_interface_[can_interface_idx][i].update(joint_states[i].vel);
         }
     }
 
