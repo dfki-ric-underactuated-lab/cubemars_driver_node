@@ -240,7 +240,6 @@ class CubemarsController():
             self.executor.spin()
         
         self.thread = threading.Thread(target = executor_loop)
-        self.thread.start()
 
         self.state = MyState.WAIT_CONF
         self.my_drive = None
@@ -414,6 +413,7 @@ class CubemarsController():
     # ---------------- Main control loop ----------------
 
     def run_controller(self):
+        self.thread.start()
         global global_interrupted, global_run
 
         self._setup_velocity_profile()
@@ -720,12 +720,13 @@ if __name__ == "__main__":
     controller = CubemarsController()
     controller.bringup_to_state("active")
     # controller.run_controller()
+    # controller.thread.join()
     try:
         # controller.thread.start()
         # print("Thread started")
-        while(rclpy.ok()):
-            time.sleep(1)
-        # rclpy.spin(controller.node)
+        # while(rclpy.ok()):
+        #     time.sleep(1)
+        rclpy.spin(controller.node)
 
     except KeyboardInterrupt:
         # Just set global_interrupted; run_controller loop will see it and shut down cleanly
