@@ -24,6 +24,12 @@ from lifecycle_msgs.msg import Transition, State
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
+
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
+from rclpy.qos import HistoryPolicy
+from rclpy.qos import DurabilityPolicy
+
 #TODO: Change turns per second with rad/s
 
 JOINT_ID = 0
@@ -219,12 +225,19 @@ class CubemarsController():
             f'{self.target_node}/joint_commands',
             1)
         
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,   # <-- RELIABILITY_QOS_POLICY
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE
+        )
+        
         self.cb_group = ReentrantCallbackGroup()
         self.subscription = self.node.create_subscription(
             JointState,
-            f'{self.target_node}/ros2_joint_state',
+            "/cubemars_hardware_node/joint_states",
             state_callback,
-            1,
+            qos_profile,
             callback_group=self.cb_group)
 
         self.subscription = self.node.create_subscription(
@@ -267,7 +280,7 @@ class CubemarsController():
         self.node.get_logger().info('ROS2 Node Creation completed')
 
     def timer_callback(self):
-        print("test")
+        # print("test")
         self.publisher_.publish(self.cmd_msg)
 
 
@@ -298,6 +311,8 @@ class CubemarsController():
         while rclpy.ok():
             state = self._get_state()
             self.node.get_logger().info(f'Current state: {state}')
+            if state == "active":
+                return True
             if until == state:
                 return True
             if state == 'unconfigured':
@@ -319,6 +334,7 @@ class CubemarsController():
                         self.node.get_logger().error('Failed to deactivate')
                         return False
                 else:
+                    print("test")
                     return True
 
             elif state == 'finalized':
@@ -396,6 +412,13 @@ class CubemarsController():
                   tau_meas_Nm, Iq_measured,  temp_fet, temp_motor):
         if self.csv_writer is None:
             return
+        
+        # print(cmd_vel_rpm_out)
+        # print(measured_vel_rpm_out)
+        # print(tau_meas_Nm)
+        # print(Iq_measured)
+        # print(temp_motor)
+        temp_motor = 0.
 
         t_unix = time.time()
 
@@ -413,10 +436,12 @@ class CubemarsController():
     # ---------------- Main control loop ----------------
 
     def run_controller(self):
-        self.thread.start()
+        print("test0")
+        # self.thread.start()
         global global_interrupted, global_run
-
+        print("test0")
         self._setup_velocity_profile()
+        print("test0")
 
         # if not self._bringup_to_state():
         #     logging.critical("Initial configuration failed. Exiting.")
@@ -424,8 +449,9 @@ class CubemarsController():
 
         self.t_start = time.monotonic()
         logging.info("--- PHASE 3: Starting Control Loop ---")
-
+        # self.thread.join()
         while global_interrupted == 0:
+            rclpy.spin_once(controller.node)
             try:
                 # Threadsafe update of state and temp
                 with self.lock_state:
@@ -451,10 +477,10 @@ class CubemarsController():
                     self.t_step_start = time.monotonic()
                     self.state = MyState.TRAJ'''
 
+                elif self.state == MyState.WAIT_EN:
+
                     print_user_configuration()
                     validate_single_step_ramp()
-
-                elif self.state == MyState.WAIT_EN:
                     if self.bringup_to_state("active"):
                         self.cmd_msg.position[JOINT_ID] = 0.
                         self.cmd_msg.kp[JOINT_ID] = 0.
@@ -521,6 +547,7 @@ class CubemarsController():
                 self.cmd_msg.velocity[JOINT_ID] = 0.
                 self.cmd_msg.acceleration[JOINT_ID] = 0.
                 self.cmd_msg.kd[JOINT_ID] = 0.
+
                 self.cmd_msg.effort[JOINT_ID] = 0.
             except Exception:
                 pass
@@ -553,6 +580,16 @@ class CubemarsController():
                 self.cmd_msg.velocity[JOINT_ID] = 0.0
                 global_run = False
                 self._was_running = False
+                
+                self.cmd_msg.position[JOINT_ID] = 0.
+                self.cmd_msg.kp[JOINT_ID] = 0.
+
+                self.cmd_msg.velocity[JOINT_ID] = 0.
+                self.cmd_msg.acceleration[JOINT_ID] = 0.
+                self.cmd_msg.kd[JOINT_ID] = 0.
+
+                self.cmd_msg.effort[JOINT_ID] = 0.
+                
                 logging.info("Single-step finished. Paused.")
                 return
 
@@ -574,7 +611,7 @@ class CubemarsController():
 
             # Convert to rad/s only HERE
             self.cmd_msg.velocity[JOINT_ID] = rpm_to_rad_s(cmd_rpm)
-            self.cmd_msg.kd[JOINT_ID] = 1.0
+            self.cmd_msg.kd[JOINT_ID] = 2.0
             return
 
 
@@ -719,9 +756,8 @@ if __name__ == "__main__":
     rclpy.init()
     controller = CubemarsController()
     controller.bringup_to_state("active")
-    # controller.run_controller()
-    # controller.thread.join()
     try:
+        controller.run_controller()
         # controller.thread.start()
         # print("Thread started")
         # while(rclpy.ok()):
