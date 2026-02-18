@@ -25,12 +25,13 @@ from lifecycle_msgs.msg import Transition
 
 JOINT_ID = 0
 PID_FILE = "/tmp/hilscher.pid"
+LOGDIR = "/home/testbench/mtb-data"
 
-KD = 2.5
+KD = 5.
 
 MAX_RPM = 30.0
-NUM_REF_VEL_STEPS = 1
-SECS_PER_VEL_STEP = 10.0
+NUM_REF_VEL_STEPS = 10
+SECS_PER_VEL_STEP = 1.0
 RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
 
@@ -78,7 +79,7 @@ def signal_handler(sig, frame):
         logging.warning("Shutdown requested")
 
     elif sig == signal.SIGRTMIN:
-        controller.start_logging()
+        controller.start_logging() # TODO: Why extra signal for logging and not start with RUN?
 
     elif sig == signal.SIGRTMIN + 1:
         controller.stop_logging()
@@ -123,7 +124,7 @@ class CubemarsController:
         self.cmd_msg.velocity = [0.0]
         self.cmd_msg.acceleration = [0.0]
         self.cmd_msg.kp = [0.0]
-        self.cmd_msg.kd = [0.0]
+        self.cmd_msg.kd = [KD]
         self.cmd_msg.effort = [0.0]
 
         self.publisher = self.node.create_publisher(
@@ -144,6 +145,7 @@ class CubemarsController:
 
         self.state_msg = None
         self.temp = None
+        self.can_cycle = None
 
         cb_group = ReentrantCallbackGroup()
 
@@ -156,9 +158,16 @@ class CubemarsController:
 
         self.node.create_subscription(
             Float32MultiArray,
-            f"{self.target_node}/joint_temperatures",
+            f"/joint_temperatures",
             self._temp_cb,
-            1,
+            qos,
+            callback_group=cb_group)
+
+        self.node.create_subscription(
+            Float32MultiArray,
+            f"/can_cycle_frequencies",
+            self._can_cycle_cb,
+            qos,
             callback_group=cb_group)
 
         # ---- Trajectory state ----
@@ -221,6 +230,9 @@ class CubemarsController:
     def _temp_cb(self, msg):
         self.temp = msg.data[JOINT_ID]
 
+    def _can_cycle_cb(self, msg):
+        self.can_cycle = msg.data[JOINT_ID]
+
     def _publish_cmd(self):
         self.publisher.publish(self.cmd_msg)
 
@@ -242,10 +254,21 @@ class CubemarsController:
         if self.data_file:
             return
         name = time.strftime("%Y%m%d_%H%M%S")
-        path = f"/home/testbench/mtb-data/{name}_Cubemars.csv"
+        path = f"{LOGDIR}/{name}_Cubemars.csv"
         self.data_file = open(path, "w", newline="")
         self.csv_writer = csv.writer(self.data_file)
-        self.csv_writer.writerow(["Time", "Torque", "Speed", "Temp", "RefVel"])
+        self.csv_writer.writerow(["Time", 
+                                  "Torque",
+                                  "Speed", 
+                                  "Position", 
+                                  "Temp", 
+                                  "TorqueCmd", 
+                                  "VelCmd", 
+                                  "PosCmd", 
+                                  "KP", 
+                                  "KD",
+                                  "CanCycleFreq"])
+        self.data_file.flush()
         logging.info(f"Logging started → {path}")
 
     def stop_logging(self):
@@ -254,6 +277,30 @@ class CubemarsController:
             self.data_file = None
             self.csv_writer = None
             logging.info("Logging stopped")
+    
+    def _log(self):
+        if not self.csv_writer:
+            return
+        if not self.state_msg:
+            return
+
+        try:
+            self.csv_writer.writerow([
+                f"{time.time():.6f}",
+                f"{self.state_msg.effort[JOINT_ID]:.6f}",
+                f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]):.6f}",
+                f"{rad_s_to_rpm(self.state_msg.position[JOINT_ID]):.6f}",
+                f"{self.temp if self.temp is not None else -1.0:.2f}",
+                f"{rad_s_to_rpm(self.cmd_msg.effort[JOINT_ID]):.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.position[JOINT_ID]):.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.kp[JOINT_ID]):.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.kd[JOINT_ID]):.6f}",
+                f"{self.can_cycle if self.can_cycle is not None else -1.0:.2f}",
+            ])
+            self.data_file.flush()
+        except Exception as e:
+            logging.warning(f"CSV write failed: {e}")
 
     # ================= TRAJECTORY =================
 
@@ -340,6 +387,7 @@ class CubemarsController:
         while not global_interrupted and rclpy.ok():
             rclpy.spin_once(self.node)
             self._traj_step()
+            self._log()
             time.sleep(0.001)
 
         zero_command(self.cmd_msg)
@@ -373,7 +421,6 @@ if __name__ == "__main__":
     try:
         controller.run()
     finally:
-        controller.stop_logging()
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
         rclpy.shutdown()
