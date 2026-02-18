@@ -35,6 +35,8 @@ from rclpy.qos import DurabilityPolicy
 JOINT_ID = 0
 TORQUE_CONSTANT=1.1314 # AK10-9 v3
 
+# TODO: Gains: 100p 2d
+
 # Used to read the PID by other programs.
 PID_FILE = "/tmp/hilscher.pid"
 
