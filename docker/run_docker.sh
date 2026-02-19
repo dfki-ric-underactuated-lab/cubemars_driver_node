@@ -14,7 +14,7 @@ docker run -it \
 	--name cubemars_docker \
 	--volume ${PARENT_PATH}/:/ros_ws/src/cubemars_driver_node \
 	--volume /tmp:/tmp \
-	--volume ${SCRIPT_PATH}/mtb-data:/home/testbench/mtb-data \
+	--volume /home/testbench/mtb-data:/home/testbench/mtb-data \
 	--net=host \
 	--pid=host \
 	--ipc=host \

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y wget git curl \
 RUN mkdir -p /ros_ws/src
 
 RUN git clone https://github.com/dfki-ric-underactuated-lab/robot_control_msgs /ros_ws/src/robot_control_msgs
-COPY --exclude=docker . /ros_ws/src/cubemars_driver_node
+COPY . /ros_ws/src/cubemars_driver_node
 
 WORKDIR /ros_ws
 RUN rosdep update && rosdep install --from-paths src --ignore-src -r -y;
