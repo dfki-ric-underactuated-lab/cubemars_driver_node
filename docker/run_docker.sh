@@ -8,6 +8,8 @@ docker container rm cubemars_docker
 mkdir -p ${SCRIPT_PATH}/mtb-data
 sudo chown -R 1000:1000 ${SCRIPT_PATH}/mtb-data
 
+bash ${PARENT_PATH}/scripts/open_can.sh
+
 docker run -it \
 	--name cubemars_docker \
 	--volume ${PARENT_PATH}/:/ros_ws/src/cubemars_driver_node \
@@ -16,5 +18,8 @@ docker run -it \
 	--net=host \
 	--pid=host \
 	--ipc=host \
+	-e DISPLAY=$DISPLAY \
+	-v /tmp/.X11-unix:/tmp/.X11-unix \
+	--device /dev/dri \
 	--user 1000:1000 \
 	cubemars_ros bash -c ". /ros_ws/install/setup.bash && ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-file src/cubemars_driver_node/config/specimen_config.yaml"

@@ -12,7 +12,7 @@ configure_can_interface() {
     # Bring down the interface if it's up
     ip link show $interface &> /dev/null
     if [ $? -eq 0 ]; then
-    ip link set $interface down
+    sudo ip link set $interface down
     echo "$interface is down."
     else
     echo "$interface does not exist."
@@ -20,11 +20,11 @@ configure_can_interface() {
     fi
 
     # Set bitrate and txqueuelen
-    ip link set $interface type can bitrate $BITRATE
-    ip link set $interface txqueuelen $TXQUEUELEN
+    sudo ip link set $interface type can bitrate $BITRATE
+    sudo ip link set $interface txqueuelen $TXQUEUELEN
 
     # Bring the interface up
-    ip link set $interface up
+    sudo ip link set $interface up
     echo "$interface is up with bitrate $BITRATE and txqueuelen $TXQUEUELEN."
 }
 
