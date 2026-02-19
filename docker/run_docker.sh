@@ -23,3 +23,6 @@ docker run -it \
 	--device /dev/dri \
 	--user 1000:1000 \
 	cubemars_ros bash -c ". /ros_ws/install/setup.bash && ros2 run cubemars_hardware_interface cubemars_hardware_node --ros-args --params-file src/cubemars_driver_node/config/specimen_config.yaml"
+
+# Testbench command
+# . install/setup.bash && python3 src/cubemars_driver_node/scripts/motor_testbench_cleanup.py
