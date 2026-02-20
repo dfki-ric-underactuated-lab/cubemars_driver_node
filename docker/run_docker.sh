@@ -2,7 +2,9 @@
 SCRIPT_PATH=$(builtin cd "`dirname "${BASH_SOURCE[0]}"`" && pwd)
 PARENT_PATH=$(dirname "$SCRIPT_PATH")
 # Build
-docker build -t cubemars_ros -f ${PARENT_PATH}/docker/Dockerfile ${PARENT_PATH}
+if [ $1 = "rebuild" ]; then
+	docker build -t cubemars_ros -f ${PARENT_PATH}/docker/Dockerfile ${PARENT_PATH}
+fi
 docker container rm cubemars_docker
 
 mkdir -p ${SCRIPT_PATH}/mtb-data
@@ -14,7 +16,7 @@ docker run -it \
 	--name cubemars_docker \
 	--volume ${PARENT_PATH}/:/ros_ws/src/cubemars_driver_node \
 	--volume /tmp:/tmp \
-	--volume /home/testbench/mtb-data:/home/testbench/mtb-data \
+	--volume ${SCRIPT_PATH}/mtb-data:/home/testbench/mtb-data \
 	--net=host \
 	--pid=host \
 	--ipc=host \

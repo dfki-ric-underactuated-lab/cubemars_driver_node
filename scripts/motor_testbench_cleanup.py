@@ -24,15 +24,23 @@ from lifecycle_msgs.msg import Transition
 # ================= CONFIG =================
 
 JOINT_ID = 0
+KD = 5.
+
 PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
-KD = 5.
+TORQUE_RAMP = True
+MAX_TORQUE = 18.0
+NUM_REF_TORQUE_STEPS = 10
+SECS_PER_TORQUE_STEP = 1.0
+TORQUE_RAMP_REPEAT = 1
+SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
 
+VEL_RAMP = False
 MAX_RPM = 120.0
 NUM_REF_VEL_STEPS = 1
 SECS_PER_VEL_STEP = 360.0
-RAMP_REPEAT = 1
+VEL_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
 
 logging.basicConfig(level=logging.INFO,
@@ -172,8 +180,11 @@ class CubemarsController:
 
         # ---- Trajectory state ----
         self.ref_vels_rpm = []
-        self.idx = 0
-        self.dir = 1
+        self.ref_torque = []
+        self.vel_idx = 0
+        self.torque_idx = 0
+        self.vel_dir = 1
+        self.torque_dir = 1
         self.t_step_start = time.monotonic()
         self.cycle_count = 0
         self.was_running = False
@@ -239,14 +250,25 @@ class CubemarsController:
     # ================= PROFILE =================
 
     def _setup_profile(self):
-        self.ref_vels_rpm.clear()
-        if NUM_REF_VEL_STEPS <= 1:
-            self.ref_vels_rpm = [0.0, MAX_RPM]
-        else:
-            for i in range(NUM_REF_VEL_STEPS + 1):
-                self.ref_vels_rpm.append(i * MAX_RPM / NUM_REF_VEL_STEPS)
+        self.ref_torque.clear()
+        if TORQUE_RAMP:
+            if NUM_REF_TORQUE_STEPS <= 1:
+                self.ref_torque = [0.0, MAX_TORQUE]
+            else:
+                for i in range(NUM_REF_TORQUE_STEPS + 1):
+                    self.ref_torque.append(i * MAX_TORQUE / NUM_REF_TORQUE_STEPS)
 
-        logging.info(f"Velocity profile generated: {self.ref_vels_rpm}")
+            logging.info(f"Torque profile generated: {self.ref_torque}")
+
+        self.ref_vels_rpm.clear()
+        if VEL_RAMP:
+            if NUM_REF_VEL_STEPS <= 1:
+                self.ref_vels_rpm = [0.0, MAX_RPM]
+            else:
+                for i in range(NUM_REF_VEL_STEPS + 1):
+                    self.ref_vels_rpm.append(i * MAX_RPM / NUM_REF_VEL_STEPS)
+
+            logging.info(f"Velocity profile generated: {self.ref_vels_rpm}")
 
     # ================= LOGGING =================
 
@@ -314,7 +336,35 @@ class CubemarsController:
             self.was_running = False
             return
 
-        if NUM_REF_VEL_STEPS == 1:
+        if TORQUE_RAMP and NUM_REF_TORQUE_STEPS == 1:
+            if not self.was_running:
+                self.was_running = True
+                self.t_step_start = now
+                logging.info("Single-step started")
+
+            elapsed = now - self.t_step_start
+            if elapsed >= SECS_PER_TORQUE_STEP:
+                global_run = False
+                zero_command(self.cmd_msg)
+                logging.info("Single-step finished")
+                return
+
+            if SINGLE_STEP_RAMP_RATE_NM_PER_S > 0:
+                ramp = SINGLE_STEP_RAMP_RATE_NM_PER_S
+                ramp_time = MAX_TORQUE / ramp
+                if elapsed < ramp_time:
+                    torque = ramp * elapsed
+                elif elapsed > SECS_PER_TORQUE_STEP - ramp_time:
+                    torque = ramp * (SECS_PER_TORQUE_STEP - elapsed)
+                else:
+                    torque = MAX_TORQUE
+            else:
+                torque = MAX_TORQUE
+
+            self.cmd_msg.effort[0] = torque
+            return
+
+        if VEL_RAMP and NUM_REF_VEL_STEPS == 1:
             if not self.was_running:
                 self.was_running = True
                 self.t_step_start = now
@@ -346,35 +396,63 @@ class CubemarsController:
         # ----- Multi-step -----
         if not self.was_running:
             self.was_running = True
-            self.idx = 0
-            self.dir = 1
+            self.vel_idx = 0
+            self.torque_idx = 0
+            self.vel_dir = 1
+            self.torque_dir = 1
             self.t_step_start = now
             self.cycle_count = 0
             logging.info("Ramp sequence started")
 
-        if now - self.t_step_start >= SECS_PER_VEL_STEP:
-            self.idx += self.dir
+        
+        if TORQUE_RAMP:
+            if now - self.t_step_start >= SECS_PER_TORQUE_STEP:
+                self.torque_idx += self.torque_dir
 
-            if self.idx >= len(self.ref_vels_rpm):
-                self.idx = len(self.ref_vels_rpm) - 2
-                self.dir = -1
-            elif self.idx < 0:
-                self.idx = 0
-                self.dir = 1
-                self.cycle_count += 1
-                logging.info(f"Cycle {self.cycle_count} complete")
+                if self.torque_idx >= len(self.ref_torque):
+                    self.torque_idx = len(self.ref_torque) - 2
+                    self.torque_dir = -1
+                elif self.torque_idx < 0:
+                    self.torque_idx = 0
+                    self.torque_dir = 1
+                    self.cycle_count += 1
+                    logging.info(f"Cycle {self.cycle_count} complete")
 
-                if RAMP_REPEAT and self.cycle_count >= RAMP_REPEAT:
-                    global_run = False
-                    zero_command(self.cmd_msg)
-                    logging.info("Ramp finished → paused")
-                    return
+                    if TORQUE_RAMP_REPEAT and self.cycle_count >= TORQUE_RAMP_REPEAT:
+                        global_run = False
+                        zero_command(self.cmd_msg)
+                        logging.info("Ramp finished → paused")
+                        return
 
-            self.t_step_start = now
+                self.t_step_start = now
 
-        rpm = self.ref_vels_rpm[self.idx]
-        self.cmd_msg.velocity[0] = rpm_to_rad_s(rpm)
-        self.cmd_msg.kd[0] = KD
+            torque = self.ref_torque[self.torque_idx]
+            self.cmd_msg.effort[0] = torque
+
+        if VEL_RAMP:
+            if now - self.t_step_start >= SECS_PER_VEL_STEP:
+                self.vel_idx += self.vel_dir
+
+                if self.vel_idx >= len(self.ref_vels_rpm):
+                    self.vel_idx = len(self.ref_vels_rpm) - 2
+                    self.vel_dir = -1
+                elif self.vel_idx < 0:
+                    self.vel_idx = 0
+                    self.vel_dir = 1
+                    self.cycle_count += 1
+                    logging.info(f"Cycle {self.cycle_count} complete")
+
+                    if VEL_RAMP_REPEAT and self.cycle_count >= VEL_RAMP_REPEAT:
+                        global_run = False
+                        zero_command(self.cmd_msg)
+                        logging.info("Ramp finished → paused")
+                        return
+
+                self.t_step_start = now
+
+            rpm = self.ref_vels_rpm[self.vel_idx]
+            self.cmd_msg.velocity[0] = rpm_to_rad_s(rpm)
+            self.cmd_msg.kd[0] = KD
 
     # ================= MAIN LOOP =================
 
@@ -396,17 +474,31 @@ class CubemarsController:
 
 
 def print_user_configuration():
-    logging.info("========== USER CONFIGURATION ==========")
-    logging.info(f"Max output speed (MAX_RPM): {MAX_RPM} rpm")
-    logging.info(f"Number of velocity steps (NUM_REF_VEL_STEPS): {NUM_REF_VEL_STEPS}")
-    logging.info(f"Seconds per velocity step (SECS_PER_VEL_STEP): {SECS_PER_VEL_STEP} s")
-    logging.info(f"Ramp repeat count (RAMP_REPEAT): {RAMP_REPEAT}")
-    logging.info("Single-step mode parameters (if applicable):")
-    logging.info(
-        f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): "
-        f"{SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s"
-    )
-    logging.info("========================================")
+    if TORQUE_RAMP:
+        logging.info("========== USER TORQUE CONFIGURATION ==========")
+        logging.info(f"Max output torque (MAX_TORQUE): {MAX_TORQUE} Nm")
+        logging.info(f"Number of velocity steps (NUM_REF_TORQUE_STEPS): {NUM_REF_TORQUE_STEPS}")
+        logging.info(f"Seconds per velocity step (SECS_PER_TORQUE_STEP): {SECS_PER_TORQUE_STEP} s")
+        logging.info(f"Ramp repeat count (VEL_RAMP_REPEAT): {TORQUE_RAMP_REPEAT}")
+        logging.info("Single-step mode parameters (if applicable):")
+        logging.info(
+            f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): "
+            f"{SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s"
+        )
+        logging.info("========================================")
+
+    if VEL_RAMP:
+        logging.info("========== USER VEL CONFIGURATION ==========")
+        logging.info(f"Max output speed (MAX_RPM): {MAX_RPM} rpm")
+        logging.info(f"Number of velocity steps (NUM_REF_VEL_STEPS): {NUM_REF_VEL_STEPS}")
+        logging.info(f"Seconds per velocity step (SECS_PER_VEL_STEP): {SECS_PER_VEL_STEP} s")
+        logging.info(f"Ramp repeat count (VEL_RAMP_REPEAT): {VEL_RAMP_REPEAT}")
+        logging.info("Single-step mode parameters (if applicable):")
+        logging.info(
+            f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): "
+            f"{SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s"
+        )
+        logging.info("========================================")
 
 # ================= MAIN =================
 
