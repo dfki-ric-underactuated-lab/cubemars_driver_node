@@ -22,26 +22,23 @@ from lifecycle_msgs.msg import Transition
 
 
 # ================= CONFIG =================
-
 JOINT_ID = 0
-KD = 5.
+KD = 5.0
 
 PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
-TORQUE_RAMP = False
-MAX_TORQUE = 18.0
-NUM_REF_TORQUE_STEPS = 10
-SECS_PER_TORQUE_STEP = 1.0
-TORQUE_RAMP_REPEAT = 1
-SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
+# -------- Torque Steps --------
+MAX_TORQUE = 2.0
+NUM_REF_TORQUE_STEPS = 1          # number of torque levels
+TORQUE_RAMP_REPEAT = 1            # full sweep repeats
 
-VEL_RAMP = True
-MAX_RPM = 120.0
-NUM_REF_VEL_STEPS = 1
-SECS_PER_VEL_STEP = 360.0
-VEL_RAMP_REPEAT = 1
-SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
+# -------- Chirp --------
+LOGARITHMIC_CHIRP = True
+CHIRP_START_FREQ = 0.1            # Hz
+CHIRP_END_FREQ = 100.0            # Hz
+CHIRP_DURATION = 40.0             # seconds
+CHIRP_REPEAT_PER_TORQUE = 1       # chirps per torque level
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -179,11 +176,11 @@ class CubemarsController:
             callback_group=cb_group)
 
         # ---- Trajectory state ----
-        self.ref_vels_rpm = []
+        self.ref_freq = []
         self.ref_torque = []
-        self.vel_idx = 0
+        self.freq_idx = 0
         self.torque_idx = 0
-        self.vel_dir = 1
+        self.freq_dir = 1
         self.torque_dir = 1
         self.t_step_start = time.monotonic()
         self.cycle_count = 0
@@ -248,27 +245,16 @@ class CubemarsController:
         self.publisher.publish(self.cmd_msg)
 
     # ================= PROFILE =================
-
     def _setup_profile(self):
-        self.ref_torque.clear()
-        if TORQUE_RAMP:
-            if NUM_REF_TORQUE_STEPS <= 1:
-                self.ref_torque = [0.0, MAX_TORQUE]
-            else:
-                for i in range(NUM_REF_TORQUE_STEPS + 1):
-                    self.ref_torque.append(i * MAX_TORQUE / NUM_REF_TORQUE_STEPS)
+        if NUM_REF_TORQUE_STEPS <= 1:
+            self.ref_torque = [MAX_TORQUE]
+        else:
+            self.ref_torque = [
+                i * MAX_TORQUE / (NUM_REF_TORQUE_STEPS - 1)
+                for i in range(NUM_REF_TORQUE_STEPS)
+            ]
 
-            logging.info(f"Torque profile generated: {self.ref_torque}")
-
-        self.ref_vels_rpm.clear()
-        if VEL_RAMP:
-            if NUM_REF_VEL_STEPS <= 1:
-                self.ref_vels_rpm = [0.0, MAX_RPM]
-            else:
-                for i in range(NUM_REF_VEL_STEPS + 1):
-                    self.ref_vels_rpm.append(i * MAX_RPM / NUM_REF_VEL_STEPS)
-
-            logging.info(f"Velocity profile generated: {self.ref_vels_rpm}")
+        logging.info(f"Torque steps: {self.ref_torque}")
 
     # ================= LOGGING =================
 
@@ -310,11 +296,11 @@ class CubemarsController:
             self.csv_writer.writerow([
                 f"{time.time():.6f}",
                 f"{self.state_msg.effort[JOINT_ID]:.6f}",
-                f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]):.6f}",
+                f"{self.state_msg.velocity[JOINT_ID]:.6f}",
                 f"{self.state_msg.position[JOINT_ID]:.6f}",
                 f"{self.temp if self.temp is not None else -1.0:.2f}",
                 f"{self.cmd_msg.effort[JOINT_ID]:.6f}",
-                f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",
+                f"{self.cmd_msg.velocity[JOINT_ID]:.6f}",
                 f"{self.cmd_msg.position[JOINT_ID]:.6f}",
                 f"{self.cmd_msg.kp[JOINT_ID]:.6f}",
                 f"{self.cmd_msg.kd[JOINT_ID]:.6f}",
@@ -333,126 +319,98 @@ class CubemarsController:
 
         if not global_run:
             zero_command(self.cmd_msg)
-            self.was_running = False
+            self.state = "IDLE"
             return
 
-        if TORQUE_RAMP and NUM_REF_TORQUE_STEPS == 1:
-            if not self.was_running:
-                self.was_running = True
-                self.t_step_start = now
-                logging.info("Single-step started")
+        # ---------- INIT ----------
+        if not hasattr(self, "state") or self.state == "IDLE":
+            self.state = "INIT"
 
-            elapsed = now - self.t_step_start
-            if elapsed >= SECS_PER_TORQUE_STEP:
-                global_run = False
-                zero_command(self.cmd_msg)
-                logging.info("Single-step finished")
-                return
-
-            if SINGLE_STEP_RAMP_RATE_NM_PER_S > 0:
-                ramp = SINGLE_STEP_RAMP_RATE_NM_PER_S
-                ramp_time = MAX_TORQUE / ramp
-                if elapsed < ramp_time:
-                    torque = ramp * elapsed
-                elif elapsed > SECS_PER_TORQUE_STEP - ramp_time:
-                    torque = ramp * (SECS_PER_TORQUE_STEP - elapsed)
-                else:
-                    torque = MAX_TORQUE
-            else:
-                torque = MAX_TORQUE
-
-            self.cmd_msg.effort[0] = torque
-            return
-
-        if VEL_RAMP and NUM_REF_VEL_STEPS == 1:
-            if not self.was_running:
-                self.was_running = True
-                self.t_step_start = now
-                logging.info("Single-step started")
-
-            elapsed = now - self.t_step_start
-            if elapsed >= SECS_PER_VEL_STEP:
-                global_run = False
-                zero_command(self.cmd_msg)
-                logging.info("Single-step finished")
-                return
-
-            if SINGLE_STEP_RAMP_RATE_RPM_PER_S > 0:
-                ramp = SINGLE_STEP_RAMP_RATE_RPM_PER_S
-                ramp_time = MAX_RPM / ramp
-                if elapsed < ramp_time:
-                    rpm = ramp * elapsed
-                elif elapsed > SECS_PER_VEL_STEP - ramp_time:
-                    rpm = ramp * (SECS_PER_VEL_STEP - elapsed)
-                else:
-                    rpm = MAX_RPM
-            else:
-                rpm = MAX_RPM
-
-            self.cmd_msg.velocity[0] = rpm_to_rad_s(rpm)
-            self.cmd_msg.kd[0] = KD
-            return
-
-        # ----- Multi-step -----
-        if not self.was_running:
-            self.was_running = True
-            self.vel_idx = 0
+        if self.state == "INIT":
             self.torque_idx = 0
-            self.vel_dir = 1
-            self.torque_dir = 1
-            self.t_step_start = now
-            self.cycle_count = 0
-            logging.info("Ramp sequence started")
+            self.torque_cycle = 0
+            self.chirp_cycle = 0
+            self.t_start = now
+            self.state = "SET_TORQUE"
+            logging.info("Starting torque-chirp sequence")
+            return
 
-        
-        if TORQUE_RAMP:
-            if now - self.t_step_start >= SECS_PER_TORQUE_STEP:
-                self.torque_idx += self.torque_dir
+        # ---------- SET TORQUE ----------
+        if self.state == "SET_TORQUE":
 
-                if self.torque_idx >= len(self.ref_torque):
-                    self.torque_idx = len(self.ref_torque) - 2
-                    self.torque_dir = -1
-                elif self.torque_idx < 0:
-                    self.torque_idx = 0
-                    self.torque_dir = 1
-                    self.cycle_count += 1
-                    logging.info(f"Cycle {self.cycle_count} complete")
+            self.current_torque = self.ref_torque[self.torque_idx]
 
-                    if TORQUE_RAMP_REPEAT and self.cycle_count >= TORQUE_RAMP_REPEAT:
-                        global_run = False
-                        zero_command(self.cmd_msg)
-                        logging.info("Ramp finished → paused")
-                        return
+            self.cmd_msg.kp[JOINT_ID] = 0.0
+            self.cmd_msg.kd[JOINT_ID] = 0.0
+            self.cmd_msg.effort[JOINT_ID] = self.current_torque
 
-                self.t_step_start = now
+            self.chirp_cycle = 0
+            self.t_start = now
+            self.state = "CHIRP"
 
-            torque = self.ref_torque[self.torque_idx]
-            self.cmd_msg.effort[0] = torque
+            logging.info(f"Torque step {self.torque_idx+1}/{len(self.ref_torque)} "
+                        f"→ {self.current_torque:.2f} Nm")
+            return
 
-        if VEL_RAMP:
-            if now - self.t_step_start >= SECS_PER_VEL_STEP:
-                self.vel_idx += self.vel_dir
+        # ---------- CHIRP ----------
+        if self.state == "CHIRP":
+            t = now - self.t_start
 
-                if self.vel_idx >= len(self.ref_vels_rpm):
-                    self.vel_idx = len(self.ref_vels_rpm) - 2
-                    self.vel_dir = -1
-                elif self.vel_idx < 0:
-                    self.vel_idx = 0
-                    self.vel_dir = 1
-                    self.cycle_count += 1
-                    logging.info(f"Cycle {self.cycle_count} complete")
+            # Chirp finished?
+            if t >= CHIRP_DURATION:
+                self.chirp_cycle += 1
 
-                    if VEL_RAMP_REPEAT and self.cycle_count >= VEL_RAMP_REPEAT:
-                        global_run = False
-                        zero_command(self.cmd_msg)
-                        logging.info("Ramp finished → paused")
-                        return
+                if self.chirp_cycle >= CHIRP_REPEAT_PER_TORQUE:
+                    self.state = "NEXT_TORQUE"
+                    return
 
-                self.t_step_start = now
+                self.t_start = now
+                t = 0.0
 
-            rpm = self.ref_vels_rpm[self.vel_idx]
-            self.cmd_msg.velocity[0] = rpm_to_rad_s(rpm)
-            self.cmd_msg.kd[0] = KD
+            # ----- Linear frequency sweep -----
+            f0 = CHIRP_START_FREQ
+            f1 = CHIRP_END_FREQ
+            T = CHIRP_DURATION
+
+            k = (f1 - f0) / T  # frequency slope
+
+            if LOGARITHMIC_CHIRP:
+                beta = math.log(f1 / f0) / T
+                phase = 2.0 * math.pi * f0 * (math.exp(beta * t) - 1.0) / beta
+            else:
+                # Proper integrated phase for linear chirp:
+                # φ(t) = 2π ( f0 t + 0.5 k t² )
+                phase = 2.0 * math.pi * (f0 * t + 0.5 * k * t * t)
+
+            # Symmetric torque chirp: +A to -A
+            A = self.current_torque
+
+            torque_cmd = A * math.sin(phase)
+
+            self.cmd_msg.kp[JOINT_ID] = 0.0
+            self.cmd_msg.kd[JOINT_ID] = 0.0
+            self.cmd_msg.effort[JOINT_ID] = torque_cmd
+
+            return
+
+        # ---------- NEXT TORQUE ----------
+        if self.state == "NEXT_TORQUE":
+
+            self.torque_idx += 1
+
+            if self.torque_idx >= len(self.ref_torque):
+                self.torque_cycle += 1
+
+                if TORQUE_RAMP_REPEAT and self.torque_cycle >= TORQUE_RAMP_REPEAT:
+                    logging.info("Full torque-chirp test complete")
+                    global_run = False
+                    zero_command(self.cmd_msg)
+                    return
+
+                self.torque_idx = 0
+
+            self.state = "SET_TORQUE"
+            return
 
     # ================= MAIN LOOP =================
 
@@ -474,31 +432,23 @@ class CubemarsController:
 
 
 def print_user_configuration():
-    if TORQUE_RAMP:
-        logging.info("========== USER TORQUE CONFIGURATION ==========")
-        logging.info(f"Max output torque (MAX_TORQUE): {MAX_TORQUE} Nm")
-        logging.info(f"Number of velocity steps (NUM_REF_TORQUE_STEPS): {NUM_REF_TORQUE_STEPS}")
-        logging.info(f"Seconds per velocity step (SECS_PER_TORQUE_STEP): {SECS_PER_TORQUE_STEP} s")
-        logging.info(f"Ramp repeat count (VEL_RAMP_REPEAT): {TORQUE_RAMP_REPEAT}")
-        logging.info("Single-step mode parameters (if applicable):")
-        logging.info(
-            f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): "
-            f"{SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s"
-        )
-        logging.info("========================================")
-
-    if VEL_RAMP:
-        logging.info("========== USER VEL CONFIGURATION ==========")
-        logging.info(f"Max output speed (MAX_RPM): {MAX_RPM} rpm")
-        logging.info(f"Number of velocity steps (NUM_REF_VEL_STEPS): {NUM_REF_VEL_STEPS}")
-        logging.info(f"Seconds per velocity step (SECS_PER_VEL_STEP): {SECS_PER_VEL_STEP} s")
-        logging.info(f"Ramp repeat count (VEL_RAMP_REPEAT): {VEL_RAMP_REPEAT}")
-        logging.info("Single-step mode parameters (if applicable):")
-        logging.info(
-            f"  Ramp rate (SINGLE_STEP_RAMP_RATE_RPM_PER_S): "
-            f"{SINGLE_STEP_RAMP_RATE_RPM_PER_S} rpm/s"
-        )
-        logging.info("========================================")
+    logging.info("========== USER CONFIGURATION ==========")
+    
+    # Torque ramp info
+    logging.info("Torque Ramp:")
+    logging.info(f"  Max torque (MAX_TORQUE): {MAX_TORQUE} Nm")
+    logging.info(f"  Number of torque steps (NUM_REF_TORQUE_STEPS): {NUM_REF_TORQUE_STEPS}")
+    logging.info(f"  Ramp repeat count (TORQUE_RAMP_REPEAT): {TORQUE_RAMP_REPEAT}")
+    
+    # Chirp info
+    logging.info("Chirp Test:")
+    logging.info(f"  Chirp start frequency (CHIRP_START_FREQ): {CHIRP_START_FREQ} Hz")
+    logging.info(f"  Chirp end frequency (CHIRP_END_FREQ): {CHIRP_END_FREQ} Hz")
+    logging.info(f"  Chirp duration (CHIRP_DURATION): {CHIRP_DURATION} s")
+    logging.info(f"  Repeats per torque step (CHIRP_REPEAT_PER_TORQUE): {CHIRP_REPEAT_PER_TORQUE}")
+    
+    logging.info("KD (derivative gain): {:.2f}".format(KD))
+    logging.info("========================================")
 
 # ================= MAIN =================
 

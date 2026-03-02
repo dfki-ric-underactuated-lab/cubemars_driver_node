@@ -14,6 +14,7 @@ bash ${PARENT_PATH}/scripts/open_can.sh
 
 docker run -it \
 	--name cubemars_docker \
+	--env ROS_LOCALHOST_ONLY=1 \
 	--volume ${PARENT_PATH}/:/ros_ws/src/cubemars_driver_node \
 	--volume /tmp:/tmp \
 	--volume ${SCRIPT_PATH}/mtb-data:/home/testbench/mtb-data \
