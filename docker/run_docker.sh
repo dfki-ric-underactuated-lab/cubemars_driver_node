@@ -2,7 +2,7 @@
 SCRIPT_PATH=$(builtin cd "`dirname "${BASH_SOURCE[0]}"`" && pwd)
 PARENT_PATH=$(dirname "$SCRIPT_PATH")
 # Build
-if [ $1 = "rebuild" ]; then
+if [[ $1 == "rebuild" ]]; then
 	docker build -t cubemars_ros -f ${PARENT_PATH}/docker/Dockerfile ${PARENT_PATH}
 fi
 docker container rm cubemars_docker

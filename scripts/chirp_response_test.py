@@ -29,14 +29,14 @@ PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
 # -------- Torque Steps --------
-MAX_TORQUE = 2.0
+MAX_TORQUE = 10.0
 NUM_REF_TORQUE_STEPS = 1          # number of torque levels
 TORQUE_RAMP_REPEAT = 1            # full sweep repeats
 
 # -------- Chirp --------
 LOGARITHMIC_CHIRP = True
 CHIRP_START_FREQ = 0.1            # Hz
-CHIRP_END_FREQ = 100.0            # Hz
+CHIRP_END_FREQ = 10.0            # Hz
 CHIRP_DURATION = 40.0             # seconds
 CHIRP_REPEAT_PER_TORQUE = 1       # chirps per torque level
 
