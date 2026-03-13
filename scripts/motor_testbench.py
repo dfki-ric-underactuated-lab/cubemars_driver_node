@@ -29,14 +29,14 @@ KD = 5.
 PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
-TORQUE_RAMP = False
-MAX_TORQUE = 18.0
-NUM_REF_TORQUE_STEPS = 10
-SECS_PER_TORQUE_STEP = 1.0
+TORQUE_RAMP = True
+MAX_TORQUE = 1.0
+NUM_REF_TORQUE_STEPS = 1
+SECS_PER_TORQUE_STEP = 300
 TORQUE_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
 
-VEL_RAMP = True
+VEL_RAMP = False
 MAX_RPM = 120.0
 NUM_REF_VEL_STEPS = 1
 SECS_PER_VEL_STEP = 360.0
@@ -232,7 +232,7 @@ class CubemarsController:
                 return True
             if state == "active":
                 if target == "shutdown":
-                    self._change_state(Transition.TRANSITION_SHUTDOWN)
+                    self._change_state(Transition.TRANSITION_DESTROY)
                 else:
                     self._change_state(Transition.TRANSITION_DEACTIVATE)
 
@@ -469,6 +469,8 @@ class CubemarsController:
             rpm = self.ref_vels_rpm[self.vel_idx]
             self.cmd_msg.velocity[0] = rpm_to_rad_s(rpm)
             self.cmd_msg.kd[0] = KD
+        else:
+            self.cmd_msg.kd[0] = 0.0
 
     # ================= MAIN LOOP =================
 

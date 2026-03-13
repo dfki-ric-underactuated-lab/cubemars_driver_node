@@ -81,12 +81,12 @@ def plot_bode(f, mag_db, phase_rad, coh, max_freq):
 
 
 if __name__ == "__main__":
-    cmd_file = "/home/dfki.uni-bremen.de/adanzglock/Temp/Adrian/testbench_logs/02.03/20260302_130222_Cubemars.csv"
-    meas_file = "/home/dfki.uni-bremen.de/adanzglock/Temp/Adrian/testbench_logs/02.03/20260302_140222_HilsherData.csv"
+    cmd_file = "/home/testbench/Documents/CubeMarsMotors/ros_ws/src/cubemars_driver_node/docker/mtb-data/20260313_133340_Cubemars.csv"
+    meas_file = "/home/testbench/mtb-data/20260313_143340_HilsherData.csv"
 
     t, u, y = load_and_align(cmd_file, meas_file)
 
     f, mag_db, phase_rad, coh = estimate_transfer(t, u, y)
-    max_freq = 100  # Hz
+    max_freq = 500  # Hz
 
     plot_bode(f, mag_db, phase_rad, coh, max_freq)
