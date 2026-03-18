@@ -35,6 +35,8 @@ NUM_REF_TORQUE_STEPS = 1
 SECS_PER_TORQUE_STEP = 300.
 TORQUE_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
+TORQUE_NAME = f"_TORQUE_RAMP_{MAX_TORQUE}_{NUM_REF_TORQUE_STEPS}_{SECS_PER_TORQUE_STEP}"
+
 
 VEL_RAMP = False
 MAX_RPM = 10.0
@@ -42,6 +44,7 @@ NUM_REF_VEL_STEPS = 1
 SECS_PER_VEL_STEP = 300.0
 VEL_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
+VEL_NAME = f"_VEL_RAMP_{MAX_RPM}_{NUM_REF_VEL_STEPS}_{SECS_PER_VEL_STEP}"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -275,8 +278,9 @@ class CubemarsController:
     def start_logging(self):
         if self.data_file:
             return
-        name = time.strftime("%Y%m%d_%H%M%S")
-        path = f"{LOGDIR}/{name}_Cubemars.csv"
+        t = time.localtime()
+        name = time.strftime("%Y%m%d_%H%M%S", t)
+        path = f"{LOGDIR}/{name}_Cubemars{TORQUE_NAME if TORQUE_RAMP else ""}{VEL_NAME if VEL_RAMP else ""}.csv"
         self.data_file = open(path, "w", newline="")
         self.csv_writer = csv.writer(self.data_file)
         self.csv_writer.writerow(["Time", 
@@ -309,9 +313,9 @@ class CubemarsController:
         try:
             self.csv_writer.writerow([
                 f"{time.time():.6f}",
-                f"{self.state_msg.effort[JOINT_ID]:.6f}",
-                f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]):.6f}",
-                f"{self.state_msg.position[JOINT_ID]:.6f}",
+                f"{self.state_msg.effort[JOINT_ID]:.6f if self.state_msg else math.nan}",
+                f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]):.6f if self.state_msg else math.nan}",
+                f"{self.state_msg.position[JOINT_ID]:.6f if self.state_msg else math.nan}",
                 f"{self.temp if self.temp is not None else -1.0:.2f}",
                 f"{self.cmd_msg.effort[JOINT_ID]:.6f}",
                 f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",

@@ -19,7 +19,9 @@ from robot_control_msgs.msg import JointCommand, JointState
 from std_msgs.msg import Float32MultiArray
 from lifecycle_msgs.srv import ChangeState, GetState
 from lifecycle_msgs.msg import Transition
+from bode_plot import plot_bode, load_and_align, estimate_transfer
 
+from dataclasses import dataclass
 
 # ================= CONFIG =================
 JOINT_ID = 0
@@ -30,15 +32,13 @@ LOGDIR = "/home/testbench/mtb-data"
 
 # -------- Torque Steps --------
 MAX_TORQUE = 18.0
-NUM_REF_TORQUE_STEPS = 1          # number of torque levels
-TORQUE_RAMP_REPEAT = 1            # full sweep repeats
 
 # -------- Chirp --------
 LOGARITHMIC_CHIRP = True
 CHIRP_START_FREQ = 0.1            # Hz
 CHIRP_END_FREQ = 500.0            # Hz
 CHIRP_DURATION = 30.0             # seconds
-CHIRP_REPEAT_PER_TORQUE = 1       # chirps per torque level
+CHIRP_REPEAT = 1       # chirps per torque level
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -178,17 +178,12 @@ class CubemarsController:
         # ---- Trajectory state ----
         self.ref_freq = []
         self.ref_torque = []
-        self.freq_idx = 0
-        self.torque_idx = 0
-        self.freq_dir = 1
-        self.torque_dir = 1
-        self.t_step_start = time.monotonic()
-        self.cycle_count = 0
-        self.was_running = False
 
         # ---- Logging ----
-        self.data_file = None
-        self.csv_writer = None
+        self.cmd_data_file = None
+        self.cmd_csv_writer = None
+        self.state_data_file = None
+        self.state_csv_writer = None
         self.logging_enabled = False
 
         # ---- Spin thread (kept from original) ----
@@ -217,16 +212,32 @@ class CubemarsController:
         rclpy.spin_until_future_complete(self.node, future)
         return future.result().success
 
-    def bringup_to_active(self):
+    def bring_to_state(self, target):
         while rclpy.ok():
             state = self._get_state()
-            if state == "active":
+            if state == target:
                 logging.info(f"Lifecycle state: {state}")
                 return True
-            if state == "unconfigured":
+            elif state == "unconfigured":
                 self._change_state(Transition.TRANSITION_CONFIGURE)
             elif state == "inactive":
                 self._change_state(Transition.TRANSITION_ACTIVATE)
+            elif state == "active":
+                self._change_state(Transition.TRANSITION_DEACTIVATE)
+            else:
+                logging.warn(f"Invalid lifecycle state: {state}")
+                time.sleep(0.2)
+
+    def bring_to_inactive(self):
+        while rclpy.ok():
+            state = self._get_state()
+            if state == "active":
+                self._change_state(Transition.TRANSITION_DEACTIVATE)
+            if state == "unconfigured":
+                self._change_state(Transition.TRANSITION_CONFIGURE)
+            elif state == "inactive":
+                logging.info(f"Lifecycle state: {state}")
+                return True
             else:
                 time.sleep(0.2)
 
@@ -242,71 +253,85 @@ class CubemarsController:
         self.can_cycle = msg.data[JOINT_ID]
 
     def _publish_cmd(self):
+        try:
+            self.cmd_csv_writer.writerow([
+                f"{time.time():.6f}",
+                f"{self.cmd_msg.effort[JOINT_ID]:.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",
+                f"{self.cmd_msg.position[JOINT_ID]:.6f}",
+                f"{self.cmd_msg.kp[JOINT_ID]:.6f}",
+                f"{self.cmd_msg.kd[JOINT_ID]:.6f}",
+            ])
+            self.cmd_data_file.flush()
+            self.state_msg = None
+        except Exception as e:
+            logging.warning(f"CSV write failed: {e}")
         self.publisher.publish(self.cmd_msg)
-
-    # ================= PROFILE =================
-    def _setup_profile(self):
-        if NUM_REF_TORQUE_STEPS <= 1:
-            self.ref_torque = [MAX_TORQUE]
-        else:
-            self.ref_torque = [
-                i * MAX_TORQUE / (NUM_REF_TORQUE_STEPS - 1)
-                for i in range(NUM_REF_TORQUE_STEPS)
-            ]
-
-        logging.info(f"Torque steps: {self.ref_torque}")
 
     # ================= LOGGING =================
 
     def start_logging(self):
-        if self.data_file:
-            return
-        name = time.strftime("%Y%m%d_%H%M%S")
-        path = f"{LOGDIR}/{name}_Cubemars.csv"
-        self.data_file = open(path, "w", newline="")
-        self.csv_writer = csv.writer(self.data_file)
-        self.csv_writer.writerow(["Time", 
-                                  "Torque",
-                                  "Speed", 
-                                  "Position", 
-                                  "Temp", 
-                                  "TorqueCmd", 
-                                  "VelCmd", 
-                                  "PosCmd", 
-                                  "KP", 
-                                  "KD",
-                                  "CanCycleFreq"])
-        self.data_file.flush()
-        logging.info(f"Logging started → {path}")
+        t = time.localtime()
+        self.name = time.strftime("%Y%m%d_%H%M%S", t)
+
+        cmd_path = f"{LOGDIR}/{self.name}_Cubemars_CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}.csv"
+        self.cmd_data_file = open(cmd_path, "w", newline="")
+        self.cmd_csv_writer = csv.writer(self.cmd_data_file)
+        self.cmd_csv_writer.writerow(["Time", 
+                                    "TorqueCmd", 
+                                    "VelCmd", 
+                                    "PosCmd", 
+                                    "KP", 
+                                    "KD"])
+        self.cmd_data_file.flush()
+        logging.info(f"Logging started → {cmd_path}")
+        
+        state_path = f"{LOGDIR}/{self.name}_Cubemars_CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}.csv"
+        self.state_data_file = open(state_path, "w", newline="")
+        self.state_csv_writer = csv.writer(self.state_data_file)
+        self.state_csv_writer.writerow(["Time", 
+                                    "TorqueCmd", 
+                                    "VelCmd", 
+                                    "PosCmd", 
+                                    "KP", 
+                                    "KD"])
+        
+        self.state_data_file.flush()
+        logging.info(f"Logging started → {state_path}")
 
     def stop_logging(self):
-        if self.data_file:
-            self.data_file.close()
-            self.data_file = None
-            self.csv_writer = None
-            logging.info("Logging stopped")
+        if self.cmd_data_file:
+            self.cmd_data_file.close()
+        self.cmd_data_file = None
+        self.cmd_csv_writer = None
+
+        if self.state_data_file:
+            self.state_data_file.close()
+        self.state_data_file = None
+        self.state_csv_writer = None
+        
+        logging.info("Logging stopped")
     
     def _log(self):
         if not self.csv_writer:
-            return
-        if not self.state_msg:
             return
 
         try:
             self.csv_writer.writerow([
                 f"{time.time():.6f}",
-                f"{self.state_msg.effort[JOINT_ID]:.6f}",
-                f"{self.state_msg.velocity[JOINT_ID]:.6f}",
-                f"{self.state_msg.position[JOINT_ID]:.6f}",
+                f"{self.state_msg.effort[JOINT_ID]:.6f if self.state_msg else math.nan}",
+                f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]):.6f if self.state_msg else math.nan}",
+                f"{self.state_msg.position[JOINT_ID]:.6f if self.state_msg else math.nan}",
                 f"{self.temp if self.temp is not None else -1.0:.2f}",
                 f"{self.cmd_msg.effort[JOINT_ID]:.6f}",
-                f"{self.cmd_msg.velocity[JOINT_ID]:.6f}",
+                f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",
                 f"{self.cmd_msg.position[JOINT_ID]:.6f}",
                 f"{self.cmd_msg.kp[JOINT_ID]:.6f}",
                 f"{self.cmd_msg.kd[JOINT_ID]:.6f}",
                 f"{self.can_cycle if self.can_cycle is not None else -1.0:.2f}",
             ])
             self.data_file.flush()
+            self.state_msg = None
         except Exception as e:
             logging.warning(f"CSV write failed: {e}")
 
@@ -326,20 +351,7 @@ class CubemarsController:
         if not hasattr(self, "state") or self.state == "IDLE":
             self.state = "INIT"
 
-        if self.state == "INIT":
-            self.torque_idx = 0
-            self.torque_cycle = 0
-            self.chirp_cycle = 0
-            self.t_start = now
-            self.state = "SET_TORQUE"
-            logging.info("Starting torque-chirp sequence")
-            return
-
-        # ---------- SET TORQUE ----------
-        if self.state == "SET_TORQUE":
-
-            self.current_torque = self.ref_torque[self.torque_idx]
-
+        if self.state == "INIT":            
             self.cmd_msg.kp[JOINT_ID] = 0.0
             self.cmd_msg.kd[JOINT_ID] = 0.0
             self.cmd_msg.effort[JOINT_ID] = 0.0
@@ -347,9 +359,21 @@ class CubemarsController:
             self.chirp_cycle = 0
             self.t_start = now
             self.state = "CHIRP"
+            logging.info("Starting torque-chirp sequence")
 
-            logging.info(f"Torque step {self.torque_idx+1}/{len(self.ref_torque)} "
-                        f"→ {self.current_torque:.2f} Nm")
+            self.bring_to_state("active")
+            return
+        # ------------ Done ----------
+        if self.state == "DONE":
+            cmd_file = f"{LOGDIR}/{self.name}_Cubemars_CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}.csv"
+            meas_file = f"{LOGDIR}/{self.name}_HilsherData.csv"
+
+            t, u, y = load_and_align(cmd_file, meas_file)
+
+            f, mag_db, phase_rad, coh = estimate_transfer(t, u, y)
+
+            plot_bode(f, mag_db, phase_rad, coh, CHIRP_END_FREQ, f"CHIRP_RESPONSE_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}")
+            self.state = "INIT"
             return
 
         # ---------- CHIRP ----------
@@ -360,8 +384,11 @@ class CubemarsController:
             if t >= CHIRP_DURATION:
                 self.chirp_cycle += 1
 
-                if self.chirp_cycle >= CHIRP_REPEAT_PER_TORQUE:
-                    self.state = "NEXT_TORQUE"
+                if self.chirp_cycle >= CHIRP_REPEAT:
+                    logging.info("Full torque-chirp test complete")
+                    global_run = False
+                    zero_command(self.cmd_msg)
+                    self.bring_to_state("inactive")
                     return
 
                 self.t_start = now
@@ -390,33 +417,12 @@ class CubemarsController:
             self.cmd_msg.kp[JOINT_ID] = 0.0
             self.cmd_msg.kd[JOINT_ID] = 0.0
             self.cmd_msg.effort[JOINT_ID] = torque_cmd
-
-            return
-
-        # ---------- NEXT TORQUE ----------
-        if self.state == "NEXT_TORQUE":
-
-            self.torque_idx += 1
-
-            if self.torque_idx >= len(self.ref_torque):
-                self.torque_cycle += 1
-
-                if TORQUE_RAMP_REPEAT and self.torque_cycle >= TORQUE_RAMP_REPEAT:
-                    logging.info("Full torque-chirp test complete")
-                    global_run = False
-                zero_command(self.cmd_msg)
-                return
-
-                #self.torque_idx = 0
-
-            self.state = "SET_TORQUE"
             return
 
     # ================= MAIN LOOP =================
 
     def run(self):
-        self._setup_profile()
-        self.bringup_to_active()
+        self.bring_to_state("inactive")
 
         logging.info("Starting control loop")
 
@@ -433,27 +439,20 @@ class CubemarsController:
 
 def print_user_configuration():
     logging.info("========== USER CONFIGURATION ==========")
-    
-    # Torque ramp info
-    logging.info("Torque Ramp:")
-    logging.info(f"  Max torque (MAX_TORQUE): {MAX_TORQUE} Nm")
-    logging.info(f"  Number of torque steps (NUM_REF_TORQUE_STEPS): {NUM_REF_TORQUE_STEPS}")
-    logging.info(f"  Ramp repeat count (TORQUE_RAMP_REPEAT): {TORQUE_RAMP_REPEAT}")
-    
     # Chirp info
     logging.info("Chirp Test:")
+    logging.info(f"  Max torque (MAX_TORQUE): {MAX_TORQUE} Nm")
     logging.info(f"  Chirp start frequency (CHIRP_START_FREQ): {CHIRP_START_FREQ} Hz")
     logging.info(f"  Chirp end frequency (CHIRP_END_FREQ): {CHIRP_END_FREQ} Hz")
     logging.info(f"  Chirp duration (CHIRP_DURATION): {CHIRP_DURATION} s")
-    logging.info(f"  Repeats per torque step (CHIRP_REPEAT_PER_TORQUE): {CHIRP_REPEAT_PER_TORQUE}")
-    
+    logging.info(f"  Repeats per torque step (CHIRP_REPEAT): {CHIRP_REPEAT}")
+
     logging.info("KD (derivative gain): {:.2f}".format(KD))
     logging.info("========================================")
 
 # ================= MAIN =================
 
 if __name__ == "__main__":
-
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
     print_user_configuration()

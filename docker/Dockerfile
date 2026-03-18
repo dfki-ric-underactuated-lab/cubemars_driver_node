@@ -7,7 +7,10 @@ RUN apt-get update && apt-get install -y wget git curl \
     ros-${ROS_DISTRO}-ros2-control \
     ros-${ROS_DISTRO}-ros2-controllers \
     ros-${ROS_DISTRO}-ament-cmake-core \
-    ros-${ROS_DISTRO}-plotjuggler-ros
+    ros-${ROS_DISTRO}-plotjuggler-ros \
+    python3-pandas \
+    python3-matplotlib \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /ros_ws/src
 

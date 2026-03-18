@@ -6,12 +6,27 @@ cubemars_hardware_node:
     frequency: 1000
     can_socket_timeout_usec: 10000
 
+    # joint_defintions:
+    #   joint0:
+    #     msg_idx: 0
+    #     can_interface: "can0"
+    #     can_id: 8
+    #     motor_type: "AK10-9v3"
+    #     tau_c: 0.0
+    #     tau_s: 0.5
+    #     v_s: 0.5
+    #     k: 1.0
+    #     b: 0.3
+    #     invert: true
+    #     zero_position: 0.
+    #     set_zero_position_on_configure: false
+    
     joint_defintions:
       joint0:
         msg_idx: 0
         can_interface: "can0"
-        can_id: 8
-        motor_type: "AK10-9v3"
+        can_id: 9
+        motor_type: "AK10-9_plastic_screw"
         tau_c: 0.0
         tau_s: 0.5
         v_s: 0.5
