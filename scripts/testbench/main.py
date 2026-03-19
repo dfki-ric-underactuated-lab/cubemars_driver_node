@@ -8,6 +8,7 @@ import signal
 import logging
 import numpy as np
 import threading
+from itertools import product
 
 import rclpy
 from rclpy.node import Node
@@ -17,14 +18,14 @@ from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallb
 
 from robot_control_msgs.msg import JointCommand, JointState
 from std_msgs.msg import Float32MultiArray
-from lifecycle_msgs.srv import ChangeState, GetState
-from lifecycle_msgs.msg import Transition
 
 from csv_logger import CsvLogger
 from lifecycle_node import LifecycleNode
 
 
-from bode_plot import plot_bode, load_and_align, estimate_transfer, plot_trajectory
+from plotting import plot_chirp, plot_ramp, plot_trajectory
+
+from trajectories import generate_chirp, generate_ramp
 
 # ================= CONFIG =================
 JOINT_ID = 0
@@ -35,36 +36,32 @@ LOGDIR = "/home/testbench/mtb-data"
 
 COMMAND_FREQ = 1000.
 SECS_PER_STEP = (1 / COMMAND_FREQ)
+MAX_TORQUE = 10.0
 
 # -------- Chirp --------
 CHIRP_TEST=True
-MAX_TORQUE = 1.0
 LOGARITHMIC_CHIRP = True
 CHIRP_START_FREQ = 0.1            # Hz
-CHIRP_END_FREQ = 500.0            # Hz
+CHIRP_END_FREQ = 100.0            # Hz
 CHIRP_DURATION = 10.0             # seconds
 CHIRP_REPEAT = 1       # chirps per torque level
 CHIRP_NAME = f"CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}"
 
 # ------------ Ramp ---------
 
-
-TORQUE_RAMP = True
-MAX_TORQUE = 3.0
-NUM_REF_TORQUE_STEPS = 1
+MIN_TORQUE = 0.0
+NUM_REF_TORQUE_STEPS = 10 # Two is minimum to go from 0 to max and back
 SECS_PER_TORQUE_STEP = 300.
 TORQUE_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
-TORQUE_NAME = f"_TORQUE_RAMP_{MAX_TORQUE}_{NUM_REF_TORQUE_STEPS}_{SECS_PER_STEP}"
 
-
-VEL_RAMP = False
+MIN_RPM = 0.0
 MAX_RPM = 10.0
 NUM_REF_VEL_STEPS = 1
-SECS_PER_VEL_STEP = 300.0
+SECS_PER_VEL_STEP = 30.0
 VEL_RAMP_REPEAT = 1
 SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
-VEL_NAME = f"_VEL_RAMP_{MAX_RPM}_{NUM_REF_VEL_STEPS}_{SECS_PER_STEP}"
+RAMP_NAME = f"_TORQUE_{MAX_TORQUE}_{NUM_REF_TORQUE_STEPS}_VEL_{MAX_RPM}_{NUM_REF_VEL_STEPS}_{SECS_PER_STEP}"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -77,6 +74,8 @@ global_run = False
 
 def rpm_to_rad_s(rpm):
     return rpm * (2 * math.pi / 60.0)
+MIN_VELOCITY = (rpm_to_rad_s(MIN_RPM))
+MAX_VELOCITY = (rpm_to_rad_s(MAX_RPM))
 
 
 def rad_s_to_rpm(rad_s):
@@ -90,47 +89,6 @@ def zero_command(cmd):
     cmd.kp[JOINT_ID] = 0.0
     cmd.kd[JOINT_ID] = KD # If KD = 0. motor accelerates
     cmd.effort[JOINT_ID] = 0.0
-
-
-
-def generate_chirp(A, f0, f1, duration, rate, logarithmic=False):
-    N = int(duration * rate)
-    t = np.arange(N) / rate
-
-    if logarithmic:
-        beta = math.log(f1 / f0) / duration
-        phase = 2 * math.pi * f0 * (np.exp(beta * t) - 1) / beta
-    else:
-        k = (f1 - f0) / duration
-        phase = 2 * math.pi * (f0 * t + 0.5 * k * t * t)
-
-    torque = A * np.sin(phase)
-    return torque
-
-def generate_ramp_with_torque_per_velocity():
-    # Prepare lists for storing torque and velocity ramps
-    torque_values = []
-    velocity_values = []
-
-    # Calculate ramp for velocity and torque at each velocity step
-    for _ in range(VEL_RAMP_REPEAT):
-        for step in range(NUM_REF_VEL_STEPS):
-            for _ in range(TORQUE_RAMP_REPEAT):
-                # Calculate current target RPM
-                current_rpm = np.linspace(0, MAX_RPM, NUM_REF_VEL_STEPS + 1)[step]
-                velocity_values.append(current_rpm)
-                
-                # Torque ramps from 0 to MAX_TORQUE and back to 0
-                ramp_up_torque = np.linspace(0, MAX_TORQUE, NUM_REF_TORQUE_STEPS)
-                ramp_down_torque = np.linspace(MAX_TORQUE, 0, NUM_REF_TORQUE_STEPS)
-                torque_values.extend(ramp_up_torque.tolist())
-                torque_values.extend(ramp_down_torque.tolist())
-    
-    # Adjust for ramp rates (this ensures the values reflect gradual changes)
-    adjusted_torque_ramp = [value / (SINGLE_STEP_RAMP_RATE_RPM_PER_S * SECS_PER_STEP) for value in torque_values]
-    adjusted_velocity_ramp = [value / (SINGLE_STEP_RAMP_RATE_RPM_PER_S * SECS_PER_STEP) for value in velocity_values]
-
-    return adjusted_torque_ramp, adjusted_velocity_ramp
 
 # ================= SIGNALS =================
 
@@ -167,7 +125,6 @@ for s in (signal.SIGINT, signal.SIGTERM,
 class CubemarsController:
 
     def __init__(self):
-        # ---- Logging ----
         self.cmd_logger = None
         self.state_logger = None
 
@@ -177,7 +134,6 @@ class CubemarsController:
         self.executor = MultiThreadedExecutor(num_threads=2)
         self.executor.add_node(self.node)
 
-        # ---- Publisher (must run continuously) ----
         self.cmd_msg = JointCommand()
         self.cmd_msg.position = [0.0]
         self.cmd_msg.velocity = [0.0]
@@ -238,23 +194,21 @@ class CubemarsController:
         self.traj_step = 0
         if CHIRP_TEST:
             self.torque_traj = generate_chirp(
-                A=MAX_TORQUE,
-                f0=CHIRP_START_FREQ,
-                f1=CHIRP_END_FREQ,
-                duration=CHIRP_DURATION,
-                rate=COMMAND_FREQ,
-                logarithmic=LOGARITHMIC_CHIRP,
+                MAX_TORQUE,
+                CHIRP_START_FREQ,
+                CHIRP_END_FREQ,
+                CHIRP_DURATION,
+                COMMAND_FREQ,
+                LOGARITHMIC_CHIRP,
             )
             self.vel_traj = np.zeros(len(self.torque_traj))
         else:
-            self.torque_traj, self.vel_traj = generate_ramp_with_torque_per_velocity()
-            
-        plot_trajectory(self.torque_traj, self.vel_traj, SECS_PER_STEP)
-
+            self.vel_traj, self.torque_traj = generate_ramp(
+                MIN_VELOCITY, MAX_VELOCITY, NUM_REF_VEL_STEPS,
+                MIN_TORQUE, MAX_TORQUE, NUM_REF_TORQUE_STEPS
+            )
         
-        logging.info(f"Torque profile generated: {self.torque_traj}")
-
-    # ================= CALLBACKS =================
+        plot_trajectory(self.torque_traj, self.vel_traj, SECS_PER_STEP)
 
     def _state_cb(self, msg):
         self.state_msg = msg
@@ -297,9 +251,12 @@ class CubemarsController:
     def start_logging(self):
         t = time.localtime()
         self.name = time.strftime("%Y%m%d_%H%M%S", t)
-
-        cmd_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_COMMAND.csv"
-        state_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_STATE.csv"
+        if CHIRP_TEST:
+            cmd_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_COMMAND.csv"
+            state_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_STATE.csv"
+        else:
+            cmd_path = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_COMMAND.csv"
+            state_path = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_STATE.csv"
 
         self.cmd_logger = CsvLogger(filename=cmd_path, header=["Time", 
                                                               "Torque (Nm)", 
@@ -315,7 +272,7 @@ class CubemarsController:
                                                               "Temp (°C)",
                                                               "Can Cycle (Hz)"])
         
-        logging.info(f"Logging started → {LOGDIR}/{self.name}_Cubemars_CHIRP*.csv")
+        logging.info(f"Logging started → {LOGDIR}/{self.name}")
 
     def stop_logging(self):
         if self.cmd_logger:
@@ -335,7 +292,6 @@ class CubemarsController:
             self.state = "IDLE"
             return
 
-        # ---------- INIT ----------
         if not hasattr(self, "state") or self.state == "IDLE":
             self.state = "INIT"
 
@@ -343,26 +299,25 @@ class CubemarsController:
             self.chirp_cycle = 0
             self.traj_step = 0
             self.state = "ACTIVE"
-            logging.info("Starting torque-chirp sequence")
+            logging.info("Starting sequence")
 
             self.lifecycle_node.bring_to_state("active")
             return
-        # ------------ Done ----------
+        
         if self.state == "DONE":
+            meas_file = f"{LOGDIR}/{self.name}_HilsherData.csv"
             if CHIRP_TEST:
-                name = f"CHIRP_RESPONSE_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}"
-                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{name}.csv"
-                meas_file = f"{LOGDIR}/{self.name}_HilsherData.csv"
-                t, u, y = load_and_align(cmd_file, meas_file)
-                f, mag_db, phase_rad, coh = estimate_transfer(t, u, y)
+                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}.csv"
+                plot_chirp(f, cmd_file, meas_file, CHIRP_END_FREQ, CHIRP_NAME)
+            else:
+                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}.csv"
+                plot_ramp(cmd_file, meas_file, RAMP_NAME)
 
-                plot_bode(f, mag_db, phase_rad, coh, CHIRP_END_FREQ, name)
             self.state = "IDLE"
             global_run = False
             
             return
 
-        # ---------- CHIRP ----------
         if self.state == "ACTIVE":
             if self.traj_step >= len(self.torque_traj):
                 self.chirp_cycle += 1
