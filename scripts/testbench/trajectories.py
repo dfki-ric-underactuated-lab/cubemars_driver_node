@@ -55,54 +55,41 @@ def generate_chirp(amplitude: float, f_start: float, f_end: float,
     torque = amplitude * np.sin(phase)
     return torque
 
+def generate_ramp(minimum: float, maximum: float, num_steps: int, secs_per_step: int, freq: float, startup_max_delta: float):
+    samples_per_step = max(1, round(secs_per_step * freq))
+    ramp = np.concatenate([
+        np.linspace(minimum, maximum, num_steps),
+        np.linspace(maximum, minimum, num_steps)[1:],
+    ])
+    ramp = np.repeat(ramp, samples_per_step)
+    if minimum != 0.:        
+        startup_steps = math.ceil(abs(minimum) / (startup_max_delta / freq))
+        ramp = np.concatenate([np.linspace(0., minimum, startup_steps)[:-1], 
+                               ramp, 
+                               np.linspace(minimum, 0., startup_steps)[1:]])
+    return ramp
 
-def generate_ramp(min_velocity: float, max_velocity: float, num_velocity_steps: int,
-                  min_torque: float, max_torque: float, num_torque_steps: int):
-    """
-    Generate a full Cartesian sweep of velocity and torque ramp trajectories.
 
-    Each signal ramps up from its minimum to its maximum and back down,
-    forming a triangle wave. The Cartesian product of the two ramps is then
-    computed so that every (velocity, torque) combination is visited.
+def generate_combined_ramp(
+    min_velocity: float, max_velocity: float, num_velocity_steps: int,
+    min_torque: float,   max_torque: float,   num_torque_steps: int,
+    secs_per_torque_step: float, fs: float,
+):
+    samples_per_step = max(1, round(secs_per_torque_step * fs))
 
-    Parameters
-    ----------
-    min_velocity : float
-        Minimum velocity value (RPM).
-    max_velocity : float
-        Maximum velocity value (RPM).
-    num_velocity_steps : int
-        Number of steps in each half of the velocity ramp (up or down).
-    min_torque : float
-        Minimum torque value (Nm).
-    max_torque : float
-        Maximum torque value (Nm).
-    num_torque_steps : int
-        Number of steps in each half of the torque ramp (up or down).
-
-    Returns
-    -------
-    velocity_trajectory : ndarray
-        Velocity values for each point in the Cartesian sweep.
-    torque_trajectory : ndarray
-        Torque values for each point in the Cartesian sweep.
-
-    Notes
-    -----
-    Output length is (2 * num_velocity_steps - 1) * (2 * num_torque_steps - 1).
-    The duplicate at the turnaround point is removed with [1:] slicing.
-    """
-    # Build triangle ramps: up then down, avoiding duplicate peak value
+    # Triangle ramps (avoid duplicate peak with [1:])
     velocity_ramp = np.concatenate([
-        np.linspace(min_velocity, max_velocity, num_velocity_steps),
-        np.linspace(max_velocity, min_velocity, num_velocity_steps)[1:]
+        np.linspace(min_velocity, max_velocity if not math.isnan(max_velocity) else 0.0, num_velocity_steps),
+        np.linspace(max_velocity if not math.isnan(max_velocity) else 0.0, min_velocity, num_velocity_steps)[1:],
     ])
     torque_ramp = np.concatenate([
         np.linspace(min_torque, max_torque, num_torque_steps),
-        np.linspace(max_torque, min_torque, num_torque_steps)[1:]
+        np.linspace(max_torque, min_torque, num_torque_steps)[1:],
     ])
 
-    # Cartesian product: every (velocity, torque) pair, then unzip into two arrays
-    velocity_trajectory, torque_trajectory = zip(*product(velocity_ramp, torque_ramp))
+    # Cartesian product → repeat each pair for the requested duration
+    pairs = list(product(velocity_ramp, torque_ramp))
+    velocity_trajectory = np.repeat([v for v, _ in pairs], samples_per_step)
+    torque_trajectory   = np.repeat([t for _, t in pairs], samples_per_step)
 
-    return np.array(velocity_trajectory), np.array(torque_trajectory)
+    return velocity_trajectory, torque_trajectory

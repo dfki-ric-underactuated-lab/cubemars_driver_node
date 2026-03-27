@@ -28,6 +28,7 @@ configure_can_interface() {
     echo "$interface is up with bitrate $BITRATE and txqueuelen $TXQUEUELEN."
 }
 
+sudo cpupower frequency-set -g performance
 # Main script execution
 for iface in "${INTERFACES[@]}"; do
     configure_can_interface $iface

@@ -7,12 +7,15 @@ import math
 import signal
 import logging
 import numpy as np
+
 import threading
+import multiprocessing
+
 from itertools import product
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
@@ -23,23 +26,24 @@ from csv_logger import CsvLogger
 from lifecycle_node import LifecycleNode
 
 
-from plotting import plot_chirp, plot_ramp, plot_trajectory
+from plotting import show_plot, plot_chirp, plot_ramp, plot_trajectory
 
 from trajectories import generate_chirp, generate_ramp
 
 # ================= CONFIG =================
 JOINT_ID = 0
-KD = 1.0
+KD = 5.0
 
 PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
 COMMAND_FREQ = 1000.
 SECS_PER_STEP = (1 / COMMAND_FREQ)
-MAX_TORQUE = 10.0
+MAX_DELTA_CMD = 1.
 
 # -------- Chirp --------
-CHIRP_TEST=True
+CHIRP_TEST=False
+MAX_TORQUE = 1.0
 LOGARITHMIC_CHIRP = True
 CHIRP_START_FREQ = 0.1            # Hz
 CHIRP_END_FREQ = 100.0            # Hz
@@ -48,20 +52,21 @@ CHIRP_REPEAT = 1       # chirps per torque level
 CHIRP_NAME = f"CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}"
 
 # ------------ Ramp ---------
+SECS_PER_RAMP_STEP = 0.3
+NUM_STEPS = 10
 
-MIN_TORQUE = 0.0
-NUM_REF_TORQUE_STEPS = 10 # Two is minimum to go from 0 to max and back
-SECS_PER_TORQUE_STEP = 300.
-TORQUE_RAMP_REPEAT = 1
-SINGLE_STEP_RAMP_RATE_NM_PER_S = 1000.0
+TORQUE_RAMP=True
+if TORQUE_RAMP:
+    MIN_TORQUE = 0.0
+    MAX_TORQUE = 2.0
+    TORQUE_RAMP_VEL = 0.0
+    RAMP_NAME = f"VEL_RAMP_{MAX_TORQUE}Nm_{NUM_STEPS}x_{SECS_PER_STEP}s"
 
-MIN_RPM = 0.0
-MAX_RPM = 10.0
-NUM_REF_VEL_STEPS = 1
-SECS_PER_VEL_STEP = 30.0
-VEL_RAMP_REPEAT = 1
-SINGLE_STEP_RAMP_RATE_RPM_PER_S = 1000.0
-RAMP_NAME = f"_TORQUE_{MAX_TORQUE}_{NUM_REF_TORQUE_STEPS}_VEL_{MAX_RPM}_{NUM_REF_VEL_STEPS}_{SECS_PER_STEP}"
+VEL_RAMP=False
+if VEL_RAMP:
+    MIN_RPM = 5.0
+    MAX_RPM = 20. # np.nan
+    RAMP_NAME = f"VEL_RAMP_{MAX_RPM}RPM_{NUM_STEPS}x_{SECS_PER_STEP}s"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
@@ -74,8 +79,9 @@ global_run = False
 
 def rpm_to_rad_s(rpm):
     return rpm * (2 * math.pi / 60.0)
-MIN_VELOCITY = (rpm_to_rad_s(MIN_RPM))
-MAX_VELOCITY = (rpm_to_rad_s(MAX_RPM))
+if VEL_RAMP:
+    MIN_VELOCITY = (rpm_to_rad_s(MIN_RPM))
+    MAX_VELOCITY = (rpm_to_rad_s(MAX_RPM))
 
 
 def rad_s_to_rpm(rad_s):
@@ -131,7 +137,7 @@ class CubemarsController:
         self.node = Node("CubemarsMotorTestNode")
         self.target_node="/cubemars_hardware_node"
 
-        self.executor = MultiThreadedExecutor(num_threads=2)
+        self.executor = SingleThreadedExecutor()
         self.executor.add_node(self.node)
 
         self.cmd_msg = JointCommand()
@@ -162,28 +168,23 @@ class CubemarsController:
         self.temp = None
         self.can_cycle = None
 
-        cb_group = ReentrantCallbackGroup()
-
         self.node.create_subscription(
             JointState,
             f"{self.target_node}/joint_states",
             self._state_cb,
-            qos,
-            callback_group=cb_group)
+            qos)
 
         self.node.create_subscription(
             Float32MultiArray,
             f"/joint_temperatures",
             self._temp_cb,
-            qos,
-            callback_group=cb_group)
+            qos)
 
         self.node.create_subscription(
             Float32MultiArray,
             f"/can_cycle_frequencies",
             self._can_cycle_cb,
-            qos,
-            callback_group=cb_group)
+            qos)
         logging.info("ROS2 Node created")
 
         self.spin_thread = threading.Thread(target=self.executor.spin)
@@ -192,6 +193,8 @@ class CubemarsController:
         self.lifecycle_node = LifecycleNode()
 
         self.traj_step = 0
+        self.vel_traj = []
+        self.torque_traj = []
         if CHIRP_TEST:
             self.torque_traj = generate_chirp(
                 MAX_TORQUE,
@@ -201,14 +204,22 @@ class CubemarsController:
                 COMMAND_FREQ,
                 LOGARITHMIC_CHIRP,
             )
-            self.vel_traj = np.zeros(len(self.torque_traj))
+            self.vel_traj = np.full(len(self.torque_traj), np.nan)
         else:
-            self.vel_traj, self.torque_traj = generate_ramp(
-                MIN_VELOCITY, MAX_VELOCITY, NUM_REF_VEL_STEPS,
-                MIN_TORQUE, MAX_TORQUE, NUM_REF_TORQUE_STEPS
-            )
+            if TORQUE_RAMP:
+                self.torque_traj = generate_ramp(MIN_TORQUE, MAX_TORQUE, NUM_STEPS, SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD)
+                self.vel_traj = np.full(len(self.torque_traj), np.nan)
+            elif VEL_RAMP:
+                self.vel_traj = generate_ramp(MIN_VELOCITY, MAX_VELOCITY, NUM_STEPS, SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD)
+                self.torque_traj = np.full(len(self.vel_traj), np.nan)
+            # self.vel_traj, self.torque_traj = generate_ramp(
+            #     MIN_VELOCITY, MAX_VELOCITY, NUM_REF_VEL_STEPS,
+            #     MIN_TORQUE, MAX_TORQUE, NUM_REF_TORQUE_STEPS,
+            #     SECS_PER_RAMP_STEP, COMMAND_FREQ
+            # )
+
         
-        plot_trajectory(self.torque_traj, self.vel_traj, SECS_PER_STEP)
+        plot_trajectory(self.torque_traj, rad_s_to_rpm(self.vel_traj), SECS_PER_STEP)
 
     def _state_cb(self, msg):
         self.state_msg = msg
@@ -230,7 +241,7 @@ class CubemarsController:
 
     def _timer_cb(self):
         if global_interrupted:
-            self.get_logger().info("Stopping control loop")
+            self.node.get_logger().info("Stopping control loop")
             self.timer.cancel()
             return
         self._traj_step()
@@ -296,7 +307,6 @@ class CubemarsController:
             self.state = "INIT"
 
         if self.state == "INIT":
-            self.chirp_cycle = 0
             self.traj_step = 0
             self.state = "ACTIVE"
             logging.info("Starting sequence")
@@ -305,13 +315,16 @@ class CubemarsController:
             return
         
         if self.state == "DONE":
+            self.stop_logging()
             meas_file = f"{LOGDIR}/{self.name}_HilsherData.csv"
             if CHIRP_TEST:
-                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}.csv"
-                plot_chirp(f, cmd_file, meas_file, CHIRP_END_FREQ, CHIRP_NAME)
+                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_COMMAND.csv"
+                state_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_STATE.csv"
+                plot_chirp(cmd_file, state_file, meas_file, CHIRP_END_FREQ, CHIRP_NAME)
             else:
-                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}.csv"
-                plot_ramp(cmd_file, meas_file, RAMP_NAME)
+                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_COMMAND.csv"
+                state_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_STATE.csv"
+                plot_ramp(cmd_file, state_file, meas_file, RAMP_NAME)
 
             self.state = "IDLE"
             global_run = False
@@ -320,19 +333,22 @@ class CubemarsController:
 
         if self.state == "ACTIVE":
             if self.traj_step >= len(self.torque_traj):
-                self.chirp_cycle += 1
-                if self.chirp_cycle >= CHIRP_REPEAT:
-                    logging.info("Full torque-chirp test complete")
-                    self.state = "DONE"
-                    zero_command(self.cmd_msg)
-                    self.lifecycle_node.bring_to_state("inactive")
-                    return
-
+                logging.info("Full test complete")
+                self.state = "DONE"
+                zero_command(self.cmd_msg)
+                self.lifecycle_node.bring_to_state("inactive")
+                return
 
             self.cmd_msg.kp[JOINT_ID] = 0.0
             self.cmd_msg.kd[JOINT_ID] = 0.0
-            self.cmd_msg.effort[JOINT_ID] = self.torque_traj[self.traj_step]
-            self.cmd_msg.velocity[JOINT_ID] = self.vel_traj[self.traj_step]
+            self.cmd_msg.effort[JOINT_ID] = 0.0
+            self.cmd_msg.velocity[JOINT_ID] = 0.0
+            if not np.isnan(self.torque_traj[self.traj_step]):
+                self.cmd_msg.effort[JOINT_ID] = self.torque_traj[self.traj_step]
+
+            if not np.isnan(self.vel_traj[self.traj_step]):
+                self.cmd_msg.velocity[JOINT_ID] = self.vel_traj[self.traj_step]
+                self.cmd_msg.kd[JOINT_ID] = KD
             self.traj_step += 1
             return
 
@@ -362,6 +378,7 @@ if __name__ == "__main__":
     controller = CubemarsController()
     try:
         while not global_interrupted:
+            show_plot()
             time.sleep(0.1)
     finally:
         if os.path.exists(PID_FILE):

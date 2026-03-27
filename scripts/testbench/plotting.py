@@ -5,67 +5,78 @@ Utilities for loading, aligning, and analyzing torque/velocity command
 and measurement signals. Provides Bode plot estimation via Welch's method
 and time-domain trajectory visualization.
 """
-
+import os
 import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import csd, welch, coherence
 from scipy.interpolate import interp1d
+import queue, threading
+_plot_queue = queue.Queue()
+
+def show_plot():
+    try:
+        fn = _plot_queue.get_nowait()
+    except queue.Empty:
+        return
+    fn() 
 
 
-def load_and_align(cmd_file: str, meas_file: str):
-    """
-    Load command and measurement CSV files, then resample both onto a
-    common time base using linear interpolation.
+def load_and_align(
+    cmd_file: str,
+    state_file: str,
+    meas_file: str | None = None,
+):
+    # --- Load required files ---
+    cmd_df   = pd.read_csv(cmd_file)
+    state_df = pd.read_csv(state_file)
 
-    Parameters
-    ----------
-    cmd_file : str
-        Path to the command CSV. Expected columns:
-        'Time', 'Torque (Nm)', 'Velocity (RPM)'.
-    meas_file : str
-        Path to the measurement CSV. Expected columns:
-        'Time', 'Torque', 'Speed'.
-
-    Returns
-    -------
-    t_common : ndarray
-        Uniformly spaced time vector covering the overlapping time range.
-    torque_cmd : ndarray
-        Command torque resampled onto t_common.
-    torque_mes : ndarray
-        Measured torque resampled onto t_common.
-    velocity_cmd : ndarray
-        Command velocity resampled onto t_common.
-    velocity_mes : ndarray
-        Measured velocity resampled onto t_common.
-    """
-    cmd_df = pd.read_csv(cmd_file)
-    meas_df = pd.read_csv(meas_file)
-
-    # --- Extract raw signals ---
-    t_cmd = cmd_df["Time"].values
+    t_cmd          = cmd_df["Time"].values
     torque_cmd_raw = cmd_df["Torque (Nm)"].values
     velocity_cmd_raw = cmd_df["Velocity (RPM)"].values
 
-    t_meas = meas_df["Time"].values
-    torque_mes_raw = meas_df["Torque"].values
-    velocity_mes_raw = meas_df["Speed"].values
+    t_state            = state_df["Time"].values
+    torque_state_raw   = state_df["Torque (Nm)"].values
+    velocity_state_raw = state_df["Velocity (RPM)"].values
 
-    # --- Build common time base over the overlapping interval ---
-    t_start = max(t_cmd.min(), t_meas.min())
-    t_end = min(t_cmd.max(), t_meas.max())
-    dt = np.median(np.diff(t_cmd))
+    # --- Optionally load meas file ---
+    has_meas = meas_file is not None and os.path.isfile(meas_file)
+    if has_meas:
+        meas_df          = pd.read_csv(meas_file)
+        t_meas           = meas_df["Time"].values
+        torque_mes_raw   = meas_df["Torque"].values
+        velocity_mes_raw = meas_df["Speed"].values
+    
+    # --- Build common time base over the overlapping interval of all present files ---
+    t_starts = [t_cmd.min(), t_state.min()]
+    t_ends   = [t_cmd.max(), t_state.max()]
+    if has_meas:
+        t_starts.append(t_meas.min())
+        t_ends.append(t_meas.max())
+
+    t_start = max(t_starts)
+    t_end   = min(t_ends)
+    dt      = np.median(np.diff(t_cmd))   # use cmd as the reference sampling rate
     t_common = np.arange(t_start, t_end, dt)
 
-    # --- Interpolate all signals onto the common time base ---
-    torque_cmd = interp1d(t_cmd, torque_cmd_raw, fill_value="extrapolate")(t_common)
-    velocity_cmd = interp1d(t_cmd, velocity_cmd_raw, fill_value="extrapolate")(t_common)
-    torque_mes = interp1d(t_meas, torque_mes_raw, fill_value="extrapolate")(t_common)
-    velocity_mes = interp1d(t_meas, velocity_mes_raw, fill_value="extrapolate")(t_common)
+    # --- Interpolate onto the common time base ---
+    def interp(t_src, y_src):
+        return interp1d(t_src, y_src, bounds_error=False, fill_value="extrapolate")(t_common)
 
-    return t_common, torque_cmd, torque_mes, velocity_cmd, velocity_mes
+    torque_cmd     = interp(t_cmd,   torque_cmd_raw)
+    velocity_cmd   = interp(t_cmd,   velocity_cmd_raw)
+    torque_state   = interp(t_state, torque_state_raw)
+    velocity_state = interp(t_state, velocity_state_raw)
+
+    if has_meas:
+        torque_mes   = interp(t_meas, torque_mes_raw)
+        velocity_mes = interp(t_meas, velocity_mes_raw)
+    else:
+        torque_mes   = None
+        velocity_mes = None
+
+    return t_common, torque_cmd, torque_state, torque_mes, velocity_cmd, velocity_state, velocity_mes
 
 
 def estimate_transfer_function(t: np.ndarray, input_signal: np.ndarray,
@@ -128,22 +139,23 @@ def plot_trajectory(torque: np.ndarray, velocity: np.ndarray, dt: float):
         Time step between samples (s).
     """
     time = np.arange(len(torque)) * dt  # build time vector from sample count and dt
+    def _draw():
+        fig, ax = plt.subplots(figsize=(10, 5))
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(time, torque,   label="Torque (Nm)",    drawstyle="steps-post")
+        ax.plot(time, velocity, label="Velocity (RPM)", drawstyle="steps-post")
 
-    ax.plot(time, torque,   label="Torque (Nm)",    drawstyle="steps-post")
-    ax.plot(time, velocity, label="Velocity (RPM)", drawstyle="steps-post")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Values")
+        ax.set_title("Trajectory")
+        ax.legend()
+        ax.grid()
 
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Values")
-    ax.set_title("Trajectory")
-    ax.legend()
-    ax.grid()
+        plt.tight_layout()
+        plt.show()
+    _plot_queue.put(_draw)
 
-    plt.tight_layout()
-    plt.show()
-
-def plot_chirp(cmd_file: str, meas_file: str, max_freq: float, name: str = "Chirp"):
+def plot_chirp(cmd_file: str, state_file: str, meas_file: str, max_freq: float, name: str = "Chirp"):
     """
     Plot a Bode diagram (magnitude, phase, coherence) for the torque
     input/output pair loaded from the given files.
@@ -162,48 +174,53 @@ def plot_chirp(cmd_file: str, meas_file: str, max_freq: float, name: str = "Chir
     name : str, optional
         Title displayed on the figure. Default is "Chirp".
     """
-    t, torque_cmd, torque_mes, _, _ = load_and_align(cmd_file, meas_file)
+    t, torque_cmd, torque_state, torque_mes, _, _, _ = load_and_align(
+        cmd_file, state_file, meas_file
+    )
     freqs, magnitude_db, phase_pi, coherence_vals = estimate_transfer_function(
-        t, torque_cmd, torque_mes
+        t, torque_cmd, torque_mes if torque_mes is not None else torque_state
     )
 
-    fig, axes = plt.subplots(3, 1, figsize=(8, 8), sharex=True)
-    fig.suptitle(name)
+    def _draw():
+        fig, axes = plt.subplots(3, 1, figsize=(8, 8), sharex=True)
+        fig.suptitle(name)
 
-    # Shade the trusted frequency band on all subplots
-    for ax in axes:
-        ax.axvspan(freqs[0], max_freq, color="lightgreen", alpha=0.3)
+        # Shade the trusted frequency band on all subplots
+        for ax in axes:
+            ax.axvspan(freqs[0], max_freq, color="lightgreen", alpha=0.3)
 
-    # --- Find the -3 dB crossover frequency ---
-    indices_below_3db = np.where(magnitude_db <= -3)[0]
-    freq_3db = freqs[indices_below_3db[0]] if len(indices_below_3db) > 0 else None
+        # --- Find the -3 dB crossover frequency ---
+        indices_below_3db = np.where(magnitude_db <= -3)[0]
+        freq_3db = freqs[indices_below_3db[0]] if len(indices_below_3db) > 0 else None
 
-    # --- Magnitude ---
-    axes[0].semilogx(freqs, magnitude_db, label="Magnitude")
-    if freq_3db is not None:
-        axes[0].axvline(freq_3db, color="red", linestyle="--",
-                        label=f"-3 dB at {freq_3db:.2f} Hz")
-    axes[0].set_ylabel("Magnitude (dB)")
-    axes[0].legend()
-    axes[0].grid(True, which="both")
+        # --- Magnitude ---
+        axes[0].semilogx(freqs, magnitude_db, label="Magnitude")
+        if freq_3db is not None:
+            axes[0].axvline(freq_3db, color="red", linestyle="--",
+                            label=f"-3 dB at {freq_3db:.2f} Hz")
+        axes[0].set_ylabel("Magnitude (dB)")
+        axes[0].legend()
+        axes[0].grid(True, which="both")
 
-    # --- Phase ---
-    axes[1].semilogx(freqs, phase_pi, label="Phase")
-    axes[1].set_ylabel("Phase (× π rad)")
-    axes[1].grid(True, which="both")
+        # --- Phase ---
+        axes[1].semilogx(freqs, phase_pi, label="Phase")
+        axes[1].set_ylabel("Phase (× π rad)")
+        axes[1].grid(True, which="both")
 
-    # --- Coherence ---
-    axes[2].semilogx(freqs, coherence_vals, label="Coherence")
-    axes[2].set_ylabel("Coherence")
-    axes[2].set_xlabel("Frequency (Hz)")
-    axes[2].set_ylim(0, 1)
-    axes[2].grid(True, which="both")
+        # --- Coherence ---
+        axes[2].semilogx(freqs, coherence_vals, label="Coherence")
+        axes[2].set_ylabel("Coherence")
+        axes[2].set_xlabel("Frequency (Hz)")
+        axes[2].set_ylim(0, 1)
+        axes[2].grid(True, which="both")
 
-    plt.tight_layout()
-    plt.show()
+        plt.tight_layout()
+        plt.show()
+    _plot_queue.put(_draw)
 
 
-def plot_ramp(cmd_file: str, meas_file: str, name: str = "Ramp"):
+
+def plot_ramp(cmd_file: str, state_file: str, meas_file: str, name: str = "Ramp"):
     """
     Plot command vs. measured torque and velocity as step signals over time.
 
@@ -220,29 +237,35 @@ def plot_ramp(cmd_file: str, meas_file: str, name: str = "Ramp"):
     name : str, optional
         Title displayed on the figure. Default is "Trajectory".
     """
-    t, torque_cmd, torque_mes, velocity_cmd, velocity_mes = load_and_align(
-        cmd_file, meas_file
+    t, torque_cmd, torque_state, torque_mes, velocity_cmd, velocity_state, velocity_mes = load_and_align(
+        cmd_file, state_file, meas_file
     )
 
-    fig, (ax_torque, ax_velocity) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    fig.suptitle(name)
+    def _draw():
+        fig, (ax_torque, ax_velocity) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        fig.suptitle(name)
 
-    # --- Torque ---
-    ax_torque.plot(t, torque_cmd, label="Torque command", drawstyle="steps-post")
-    ax_torque.plot(t, torque_mes, label="Torque measured", drawstyle="steps-post")
-    ax_torque.set_ylabel("Torque (Nm)")
-    ax_torque.set_title("Torque")
-    ax_torque.legend()
-    ax_torque.grid()
+        # --- Torque ---
+        ax_torque.plot(t, torque_cmd, label="Torque command", drawstyle="steps-post")
+        ax_torque.plot(t, torque_state, label="Torque state", drawstyle="steps-post")
+        if torque_mes is not None:
+            ax_torque.plot(t, torque_mes, label="Torque measured", drawstyle="steps-post")
+        ax_torque.set_ylabel("Torque (Nm)")
+        ax_torque.set_title("Torque")
+        ax_torque.legend()
+        ax_torque.grid()
 
-    # --- Velocity ---
-    ax_velocity.plot(t, velocity_cmd, label="Velocity command", drawstyle="steps-post")
-    ax_velocity.plot(t, velocity_mes, label="Velocity measured", drawstyle="steps-post")
-    ax_velocity.set_ylabel("Velocity (RPM)")
-    ax_velocity.set_title("Velocity")
-    ax_velocity.legend()
-    ax_velocity.grid()
+        # --- Velocity ---
+        ax_velocity.plot(t, velocity_cmd, label="Velocity command", drawstyle="steps-post")
+        ax_velocity.plot(t, velocity_state, label="Velocity state", drawstyle="steps-post")
+        if velocity_mes is not None:
+            ax_velocity.plot(t, velocity_mes, label="Velocity measured", drawstyle="steps-post")
+        ax_velocity.set_ylabel("Velocity (RPM)")
+        ax_velocity.set_title("Velocity")
+        ax_velocity.legend()
+        ax_velocity.grid()
 
-    ax_velocity.set_xlabel("Time (s)")
-    plt.tight_layout()
-    plt.show()
+        ax_velocity.set_xlabel("Time (s)")
+        plt.tight_layout()
+        plt.show()
+    _plot_queue.put(_draw)

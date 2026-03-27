@@ -22,6 +22,7 @@ docker run -it \
 	--pid=host \
 	--ipc=host \
 	-e DISPLAY=$DISPLAY \
+	-e TZ=Europe/Berlin \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
 	--device /dev/dri \
 	--user 1000:1000 \
