@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=67"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "testbench"
+version = "0.1.0"
+description = "Motor testbench package for CubeMars actuators"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pandas",
+]
+
+[project.scripts]
+testbench = "testbench.main:main"
+
+# Install from scripts/testbench/ with:  pip install -e .
+# The package lives one directory up (scripts/testbench → package testbench).
+[tool.setuptools]
+package-dir = {"" = ".."}
+packages = ["testbench", "testbench.driver"]

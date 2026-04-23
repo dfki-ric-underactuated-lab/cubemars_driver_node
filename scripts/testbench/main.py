@@ -1,387 +1,177 @@
 #!/usr/bin/env python3
+"""Entry point for the CubeMars motor testbench.
 
-import os
-import sys
-import time
-import math
-import signal
+Install the package first, then run via:
+    python -m testbench.main
+    # or, after pip install -e .:
+    testbench
+"""
+
+from __future__ import annotations
+
 import logging
+import math
+import os
+import signal
+import time
+from typing import Callable
+
 import numpy as np
 
-import threading
-import multiprocessing
+from .controller import TestConfig, TestController
+from .driver.cubemars import CubemarsDriver
+from .plotting import plot_chirp, plot_ramp, plot_trajectory, show_plot
+from .trajectories import generate_chirp, generate_ramp
 
-from itertools import product
+# ============================================================
+# Configuration
+# ============================================================
 
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
-
-from robot_control_msgs.msg import JointCommand, JointState
-from std_msgs.msg import Float32MultiArray
-
-from csv_logger import CsvLogger
-from lifecycle_node import LifecycleNode
-
-
-from plotting import show_plot, plot_chirp, plot_ramp, plot_trajectory
-
-from trajectories import generate_chirp, generate_ramp
-
-# ================= CONFIG =================
 JOINT_ID = 0
 KD = 5.0
+COMMAND_FREQ = 1000.0
+MAX_DELTA_CMD = 1.0
 
 PID_FILE = "/tmp/hilscher.pid"
 LOGDIR = "/home/testbench/mtb-data"
 
-COMMAND_FREQ = 1000.
-SECS_PER_STEP = (1 / COMMAND_FREQ)
-MAX_DELTA_CMD = 1.
+# ---- Test selection (exactly one should be True) ----
+CHIRP_TEST = False
+TORQUE_RAMP = True
+VEL_RAMP = False
 
-# -------- Chirp --------
-CHIRP_TEST=False
-MAX_TORQUE = 1.0
-LOGARITHMIC_CHIRP = True
-CHIRP_START_FREQ = 0.1            # Hz
-CHIRP_END_FREQ = 100.0            # Hz
-CHIRP_DURATION = 10.0             # seconds
-CHIRP_REPEAT = 1       # chirps per torque level
-CHIRP_NAME = f"CHIRP_{MAX_TORQUE}Nm_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz_{CHIRP_DURATION}s_{CHIRP_REPEAT}"
+# ---- Chirp parameters ----
+CHIRP_AMPLITUDE = 1.0     # Nm
+CHIRP_START_FREQ = 0.1    # Hz
+CHIRP_END_FREQ = 100.0    # Hz
+CHIRP_DURATION = 10.0     # s
+CHIRP_LOGARITHMIC = True
 
-# ------------ Ramp ---------
+# ---- Ramp parameters ----
 SECS_PER_RAMP_STEP = 0.3
 NUM_STEPS = 10
+MIN_TORQUE = 0.0
+MAX_TORQUE = 2.0
+MIN_RPM = 5.0
+MAX_RPM = 20.0
 
-TORQUE_RAMP=True
-if TORQUE_RAMP:
-    MIN_TORQUE = 0.0
-    MAX_TORQUE = 2.0
-    TORQUE_RAMP_VEL = 0.0
-    RAMP_NAME = f"VEL_RAMP_{MAX_TORQUE}Nm_{NUM_STEPS}x_{SECS_PER_STEP}s"
+# ============================================================
+# Helpers
+# ============================================================
 
-VEL_RAMP=False
-if VEL_RAMP:
-    MIN_RPM = 5.0
-    MAX_RPM = 20. # np.nan
-    RAMP_NAME = f"VEL_RAMP_{MAX_RPM}RPM_{NUM_STEPS}x_{SECS_PER_STEP}s"
-
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
-
-global_interrupted = False
-global_run = False
+def _rpm_to_rad_s(rpm: float) -> float:
+    return rpm * math.pi / 30.0
 
 
-# ================= UTIL =================
-
-def rpm_to_rad_s(rpm):
-    return rpm * (2 * math.pi / 60.0)
-if VEL_RAMP:
-    MIN_VELOCITY = (rpm_to_rad_s(MIN_RPM))
-    MAX_VELOCITY = (rpm_to_rad_s(MAX_RPM))
+def _rad_s_to_rpm(rad_s: float) -> float:
+    return rad_s * 30.0 / math.pi
 
 
-def rad_s_to_rpm(rad_s):
-    return rad_s * (60.0 / (2 * math.pi))
+def _build_trajectory() -> tuple[np.ndarray, np.ndarray, str, Callable]:
+    """Return ``(torque_traj, vel_traj, test_name, post_plot_fn)``."""
+    if CHIRP_TEST:
+        name = (
+            f"CHIRP_{CHIRP_AMPLITUDE}Nm"
+            f"_{CHIRP_START_FREQ}Hz_{CHIRP_END_FREQ}Hz"
+            f"_{CHIRP_DURATION}s"
+        )
+        torque = generate_chirp(
+            CHIRP_AMPLITUDE, CHIRP_START_FREQ, CHIRP_END_FREQ,
+            CHIRP_DURATION, COMMAND_FREQ, CHIRP_LOGARITHMIC,
+        )
+        vel = np.full(len(torque), np.nan)
+        post = lambda cmd, state, meas: plot_chirp(cmd, state, meas, CHIRP_END_FREQ, name)
+
+    elif TORQUE_RAMP:
+        name = f"TORQUE_RAMP_{MAX_TORQUE}Nm_{NUM_STEPS}x_{SECS_PER_RAMP_STEP}s"
+        torque = generate_ramp(
+            MIN_TORQUE, MAX_TORQUE, NUM_STEPS,
+            SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD,
+        )
+        vel = np.full(len(torque), np.nan)
+        post = lambda cmd, state, meas: plot_ramp(cmd, state, meas, name)
+
+    elif VEL_RAMP:
+        name = f"VEL_RAMP_{MAX_RPM}RPM_{NUM_STEPS}x_{SECS_PER_RAMP_STEP}s"
+        vel = generate_ramp(
+            _rpm_to_rad_s(MIN_RPM), _rpm_to_rad_s(MAX_RPM), NUM_STEPS,
+            SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD,
+        )
+        torque = np.full(len(vel), np.nan)
+        post = lambda cmd, state, meas: plot_ramp(cmd, state, meas, name)
+
+    else:
+        raise ValueError("No test mode selected — set CHIRP_TEST, TORQUE_RAMP, or VEL_RAMP.")
+
+    return torque, vel, name, post
 
 
-def zero_command(cmd):
-    cmd.position[JOINT_ID] = 0.0
-    cmd.velocity[JOINT_ID] = 0.0
-    cmd.acceleration[JOINT_ID] = 0.0
-    cmd.kp[JOINT_ID] = 0.0
-    cmd.kd[JOINT_ID] = KD # If KD = 0. motor accelerates
-    cmd.effort[JOINT_ID] = 0.0
+def _log_configuration(test_name: str) -> None:
+    logging.info("=" * 44)
+    logging.info(f"Test   : {test_name}")
+    logging.info(f"Joint  : {JOINT_ID}  |  KD: {KD}  |  {COMMAND_FREQ:.0f} Hz")
+    logging.info(f"Log dir: {LOGDIR}")
+    logging.info("=" * 44)
 
-# ================= SIGNALS =================
 
-def signal_handler(sig, frame):
-    global global_interrupted, global_run
+# ============================================================
+# Entry point
+# ============================================================
 
-    if sig == signal.SIGUSR1:
-        global_run = True
-        logging.info("SIGUSR1 → RUN")
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
-    elif sig == signal.SIGUSR2:
-        global_run = False
-        logging.info("SIGUSR2 → PAUSE")
+    torque_traj, vel_traj, test_name, post_plot = _build_trajectory()
+    _log_configuration(test_name)
 
-    elif sig in (signal.SIGINT, signal.SIGTERM):
-        global_interrupted = True
+    # Preview trajectory before the hardware connects
+    plot_trajectory(torque_traj, _rad_s_to_rpm(vel_traj), 1.0 / COMMAND_FREQ)
+
+    config = TestConfig(
+        joint_id=JOINT_ID,
+        default_kd=KD,
+        logdir=LOGDIR,
+        test_name=test_name,
+        torque_traj=torque_traj,
+        vel_traj=vel_traj,
+        post_plot=post_plot,
+    )
+
+    driver = CubemarsDriver(joint_id=JOINT_ID, command_freq=COMMAND_FREQ, default_kd=KD)
+    controller = TestController(driver, config)
+
+    # ---- Signal handlers ----
+    interrupted = False
+
+    def _on_interrupt(*_):
+        nonlocal interrupted
+        interrupted = True
         logging.warning("Shutdown requested")
 
-    elif sig == signal.SIGRTMIN:
-        controller.start_logging()
+    signal.signal(signal.SIGINT,       _on_interrupt)
+    signal.signal(signal.SIGTERM,      _on_interrupt)
+    signal.signal(signal.SIGUSR1,      lambda *_: controller.arm())
+    signal.signal(signal.SIGUSR2,      lambda *_: controller.disarm())
+    signal.signal(signal.SIGRTMIN,     lambda *_: controller.start_logging())
+    signal.signal(signal.SIGRTMIN + 1, lambda *_: controller.stop_logging())
 
-    elif sig == signal.SIGRTMIN + 1:
-        controller.stop_logging()
-
-
-for s in (signal.SIGINT, signal.SIGTERM,
-          signal.SIGUSR1, signal.SIGUSR2,
-          signal.SIGRTMIN, signal.SIGRTMIN + 1):
-    signal.signal(s, signal_handler)
-
-
-# ================= CONTROLLER =================
-
-class CubemarsController:
-
-    def __init__(self):
-        self.cmd_logger = None
-        self.state_logger = None
-
-        self.node = Node("CubemarsMotorTestNode")
-        self.target_node="/cubemars_hardware_node"
-
-        self.executor = SingleThreadedExecutor()
-        self.executor.add_node(self.node)
-
-        self.cmd_msg = JointCommand()
-        self.cmd_msg.position = [0.0]
-        self.cmd_msg.velocity = [0.0]
-        self.cmd_msg.acceleration = [0.0]
-        self.cmd_msg.kp = [0.0]
-        self.cmd_msg.kd = [KD]
-        self.cmd_msg.effort = [0.0]
-
-        self.publisher = self.node.create_publisher(
-            JointCommand,
-            f"{self.target_node}/joint_commands",
-            1)
-
-        # 2ms timer → ensures publishing during lifecycle transitions
-        self.timer = self.node.create_timer(1. / COMMAND_FREQ, self._timer_cb)
-
-        # ---- Subscribers ----
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-            durability=DurabilityPolicy.VOLATILE
-        )
-
-        self.state_msg = None
-        self.temp = None
-        self.can_cycle = None
-
-        self.node.create_subscription(
-            JointState,
-            f"{self.target_node}/joint_states",
-            self._state_cb,
-            qos)
-
-        self.node.create_subscription(
-            Float32MultiArray,
-            f"/joint_temperatures",
-            self._temp_cb,
-            qos)
-
-        self.node.create_subscription(
-            Float32MultiArray,
-            f"/can_cycle_frequencies",
-            self._can_cycle_cb,
-            qos)
-        logging.info("ROS2 Node created")
-
-        self.spin_thread = threading.Thread(target=self.executor.spin)
-        self.spin_thread.start()
-
-        self.lifecycle_node = LifecycleNode()
-
-        self.traj_step = 0
-        self.vel_traj = []
-        self.torque_traj = []
-        if CHIRP_TEST:
-            self.torque_traj = generate_chirp(
-                MAX_TORQUE,
-                CHIRP_START_FREQ,
-                CHIRP_END_FREQ,
-                CHIRP_DURATION,
-                COMMAND_FREQ,
-                LOGARITHMIC_CHIRP,
-            )
-            self.vel_traj = np.full(len(self.torque_traj), np.nan)
-        else:
-            if TORQUE_RAMP:
-                self.torque_traj = generate_ramp(MIN_TORQUE, MAX_TORQUE, NUM_STEPS, SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD)
-                self.vel_traj = np.full(len(self.torque_traj), np.nan)
-            elif VEL_RAMP:
-                self.vel_traj = generate_ramp(MIN_VELOCITY, MAX_VELOCITY, NUM_STEPS, SECS_PER_RAMP_STEP, COMMAND_FREQ, MAX_DELTA_CMD)
-                self.torque_traj = np.full(len(self.vel_traj), np.nan)
-            # self.vel_traj, self.torque_traj = generate_ramp(
-            #     MIN_VELOCITY, MAX_VELOCITY, NUM_REF_VEL_STEPS,
-            #     MIN_TORQUE, MAX_TORQUE, NUM_REF_TORQUE_STEPS,
-            #     SECS_PER_RAMP_STEP, COMMAND_FREQ
-            # )
-
-        
-        plot_trajectory(self.torque_traj, rad_s_to_rpm(self.vel_traj), SECS_PER_STEP)
-
-    def _state_cb(self, msg):
-        self.state_msg = msg
-        if self.state_logger:
-            self.state_logger.log([
-                    f"{time.time():.6f}",
-                    f"{self.state_msg.effort[JOINT_ID] if self.state_msg else math.nan}",
-                    f"{rad_s_to_rpm(self.state_msg.velocity[JOINT_ID]) if self.state_msg else math.nan}",
-                    f"{self.state_msg.position[JOINT_ID] if self.state_msg else math.nan}",
-                    f"{self.temp if self.temp is not None else -1.0:.2f}",
-                    f"{self.can_cycle if self.can_cycle is not None else -1.0:.2f}",
-            ])
-
-    def _temp_cb(self, msg):
-        self.temp = msg.data[JOINT_ID]
-
-    def _can_cycle_cb(self, msg):
-        self.can_cycle = msg.data[JOINT_ID]
-
-    def _timer_cb(self):
-        if global_interrupted:
-            self.node.get_logger().info("Stopping control loop")
-            self.timer.cancel()
-            return
-        self._traj_step()
-        self.publisher.publish(self.cmd_msg)
-
-        if self.cmd_logger:
-            self.cmd_logger.log([
-                    f"{time.time():.6f}",
-                    f"{self.cmd_msg.effort[JOINT_ID]:.6f}",
-                    f"{rad_s_to_rpm(self.cmd_msg.velocity[JOINT_ID]):.6f}",
-                    f"{self.cmd_msg.position[JOINT_ID]:.6f}",
-                    f"{self.cmd_msg.kp[JOINT_ID]:.6f}",
-                    f"{self.cmd_msg.kd[JOINT_ID]:.6f}",
-            ])
-
-    # ================= LOGGING =================
-
-    def start_logging(self):
-        t = time.localtime()
-        self.name = time.strftime("%Y%m%d_%H%M%S", t)
-        if CHIRP_TEST:
-            cmd_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_COMMAND.csv"
-            state_path = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_STATE.csv"
-        else:
-            cmd_path = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_COMMAND.csv"
-            state_path = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_STATE.csv"
-
-        self.cmd_logger = CsvLogger(filename=cmd_path, header=["Time", 
-                                                              "Torque (Nm)", 
-                                                              "Velocity (RPM)", 
-                                                              "Position (rad)", 
-                                                              "KP", 
-                                                              "KD"])
-        
-        self.state_logger = CsvLogger(filename=state_path, header=["Time", 
-                                                              "Torque (Nm)",
-                                                              "Velocity (RPM)", 
-                                                              "Position (rad)", 
-                                                              "Temp (°C)",
-                                                              "Can Cycle (Hz)"])
-        
-        logging.info(f"Logging started → {LOGDIR}/{self.name}")
-
-    def stop_logging(self):
-        if self.cmd_logger:
-            self.cmd_logger.close()
-        if self.state_logger:
-            self.state_logger.close()
-        self.cmd_logger = None
-        self.state_logger = None
-        logging.info("Logging stopped")
-
-    # ================= TRAJECTORY =================
-
-    def _traj_step(self):
-        global global_run
-        if not global_run:
-            zero_command(self.cmd_msg)
-            self.state = "IDLE"
-            return
-
-        if not hasattr(self, "state") or self.state == "IDLE":
-            self.state = "INIT"
-
-        if self.state == "INIT":
-            self.traj_step = 0
-            self.state = "ACTIVE"
-            logging.info("Starting sequence")
-
-            self.lifecycle_node.bring_to_state("active")
-            return
-        
-        if self.state == "DONE":
-            self.stop_logging()
-            meas_file = f"{LOGDIR}/{self.name}_HilsherData.csv"
-            if CHIRP_TEST:
-                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_COMMAND.csv"
-                state_file = f"{LOGDIR}/{self.name}_Cubemars_{CHIRP_NAME}_STATE.csv"
-                plot_chirp(cmd_file, state_file, meas_file, CHIRP_END_FREQ, CHIRP_NAME)
-            else:
-                cmd_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_COMMAND.csv"
-                state_file = f"{LOGDIR}/{self.name}_Cubemars_{RAMP_NAME}_STATE.csv"
-                plot_ramp(cmd_file, state_file, meas_file, RAMP_NAME)
-
-            self.state = "IDLE"
-            global_run = False
-            
-            return
-
-        if self.state == "ACTIVE":
-            if self.traj_step >= len(self.torque_traj):
-                logging.info("Full test complete")
-                self.state = "DONE"
-                zero_command(self.cmd_msg)
-                self.lifecycle_node.bring_to_state("inactive")
-                return
-
-            self.cmd_msg.kp[JOINT_ID] = 0.0
-            self.cmd_msg.kd[JOINT_ID] = 0.0
-            self.cmd_msg.effort[JOINT_ID] = 0.0
-            self.cmd_msg.velocity[JOINT_ID] = 0.0
-            if not np.isnan(self.torque_traj[self.traj_step]):
-                self.cmd_msg.effort[JOINT_ID] = self.torque_traj[self.traj_step]
-
-            if not np.isnan(self.vel_traj[self.traj_step]):
-                self.cmd_msg.velocity[JOINT_ID] = self.vel_traj[self.traj_step]
-                self.cmd_msg.kd[JOINT_ID] = KD
-            self.traj_step += 1
-            return
-
-
-
-def print_chirp_configuration():
-    logging.info("========== USER CONFIGURATION ==========")
-    # Chirp info
-    logging.info("Chirp Test:")
-    logging.info(f"  Max torque (MAX_TORQUE): {MAX_TORQUE} Nm")
-    logging.info(f"  Chirp start frequency (CHIRP_START_FREQ): {CHIRP_START_FREQ} Hz")
-    logging.info(f"  Chirp end frequency (CHIRP_END_FREQ): {CHIRP_END_FREQ} Hz")
-    logging.info(f"  Chirp duration (CHIRP_DURATION): {CHIRP_DURATION} s")
-    logging.info(f"  Repeats per torque step (CHIRP_REPEAT): {CHIRP_REPEAT}")
-
-    logging.info("KD (derivative gain): {:.2f}".format(KD))
-    logging.info("========================================")
-
-# ================= MAIN =================
-
-if __name__ == "__main__":
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
-    print_chirp_configuration()
 
-    rclpy.init()
-    controller = CubemarsController()
+    driver.start(controller.step)
     try:
-        while not global_interrupted:
+        while not interrupted:
             show_plot()
             time.sleep(0.1)
     finally:
+        driver.shutdown()
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
-        rclpy.shutdown()
         logging.info("Exited cleanly")
+
+
+if __name__ == "__main__":
+    main()

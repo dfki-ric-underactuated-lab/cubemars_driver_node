@@ -1,73 +1,68 @@
-#!/usr/bin/env python3
+"""Manages lifecycle state transitions for a ROS 2 managed node."""
 
-import os
-import sys
-import time
-import math
-import signal
+from __future__ import annotations
+
 import logging
-import numpy as np
-import threading
+import time
 
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 
-from robot_control_msgs.msg import JointCommand, JointState
-from std_msgs.msg import Float32MultiArray
-from lifecycle_msgs.srv import ChangeState, GetState
 from lifecycle_msgs.msg import Transition
-#from bode_plot import plot_bode, load_and_align, estimate_transfer
+from lifecycle_msgs.srv import ChangeState, GetState
 
-from csv_logger import CsvLogger
 
 class LifecycleNode:
-    def __init__(self, target_node="/cubemars_hardware_node"):
-        # ---- Lifecycle clients ----
-        self.lifecycle_node = Node("CubemarsMotorLifecycleNode")
-        self.target_node = target_node
+    """
+    Controls the lifecycle of a ROS 2 managed node.
 
-        service_group = MutuallyExclusiveCallbackGroup()
+    Wraps the ``change_state`` and ``get_state`` services to provide a
+    simple polling interface for driving a node through its lifecycle
+    (unconfigured → inactive → active).
+    """
 
-        self.change_state_client = self.lifecycle_node.create_client(
+    def __init__(self, target_node: str = "/cubemars_hardware_node") -> None:
+        self._node = Node("cubemars_motor_lifecycle_node")
+        self._target_node = target_node
+
+        callback_group = MutuallyExclusiveCallbackGroup()
+
+        self._change_state_client = self._node.create_client(
             ChangeState,
-            f"{self.target_node}/change_state",
-            callback_group=service_group)
-
-        self.get_state_client = self.lifecycle_node.create_client(
+            f"{target_node}/change_state",
+            callback_group=callback_group,
+        )
+        self._get_state_client = self._node.create_client(
             GetState,
-            f"{self.target_node}/get_state",
-            callback_group=service_group)
-
+            f"{target_node}/get_state",
+            callback_group=callback_group,
+        )
 
         self._wait_for_services()
-
         self.bring_to_state("inactive")
+        logging.info(f"Configured {target_node}")
 
-        logging.info(f"Configured {self.target_node} node")
+    def _wait_for_services(self) -> None:
+        logging.info("Waiting for lifecycle services…")
+        self._change_state_client.wait_for_service()
+        self._get_state_client.wait_for_service()
 
-    
-    def _wait_for_services(self):
-        logging.info("Waiting for lifecycle services...")
-        self.change_state_client.wait_for_service()
-        self.get_state_client.wait_for_service()
-
-    def _get_state(self):
+    def _get_state(self) -> str:
         req = GetState.Request()
-        future = self.get_state_client.call_async(req)
-        rclpy.spin_until_future_complete(self.lifecycle_node, future)
+        future = self._get_state_client.call_async(req)
+        rclpy.spin_until_future_complete(self._node, future)
         return future.result().current_state.label
 
-    def _change_state(self, transition):
+    def _change_state(self, transition: int) -> bool:
         req = ChangeState.Request()
         req.transition.id = transition
-        future = self.change_state_client.call_async(req)
-        rclpy.spin_until_future_complete(self.lifecycle_node, future)
+        future = self._change_state_client.call_async(req)
+        rclpy.spin_until_future_complete(self._node, future)
         return future.result().success
 
-    def bring_to_state(self, target):
+    def bring_to_state(self, target: str) -> bool:
+        """Poll-drive the hardware node to *target* (e.g. ``"inactive"``, ``"active"``)."""
         while rclpy.ok():
             state = self._get_state()
             if state == target:
@@ -80,5 +75,6 @@ class LifecycleNode:
             elif state == "active":
                 self._change_state(Transition.TRANSITION_DEACTIVATE)
             else:
-                logging.warn(f"Invalid lifecycle state: {state}")
+                logging.warning(f"Unknown lifecycle state: {state}")
                 time.sleep(0.2)
+        return False
