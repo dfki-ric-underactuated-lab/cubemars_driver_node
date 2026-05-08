@@ -159,6 +159,8 @@ namespace cubemars
         {"AK80-6_V1p1", {0,"", -12.5, 12.5, -22.5, 22.5, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, true, true, SERIES_TYPE::V2}},
         {"AK10-9v3",      {0,"", -12.56, 12.56, -28.0, 28.0, -54.0, 54.0, 0.0, 500.0, 0.0, 5.0, false, false, SERIES_TYPE::V3,21,9,1.1314,false}},
         {"AK80-8v3",      {0,"", -12.5, 12.5, -37.5, 37.5, -32.0, 32.0, 0.0, 500.0, 0.0, 5.0, false, false, SERIES_TYPE::V3,21,8,1.0566,true}},
+        // TODO: Set the correct values via RLink and update the config map accordingly
+        {"AKE80-8_KV30", {0, "", -12.5, 12.5, -20.4, 20.4, -12.0, 12.0, 0.0, 500.0, 0.0, 5.0, false, false, SERIES_TYPE::V2}},
     };
 
 } // namespace cubemars
