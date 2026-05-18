@@ -12,6 +12,7 @@
 #include <shared_mutex>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "std_srvs/srv/trigger.hpp"
+#include "robot_control_msgs/srv/set_motor_origin_here.hpp"
 #include "cubemars_hardware_interface/filters.hpp"
 
 using namespace rclcpp_lifecycle::node_interfaces;
@@ -33,6 +34,8 @@ public:
         double b;     // Viscous friction coefficient
     };
 
+    enum class VelFilterType { NONE, MOVING_AVERAGE, ALPHA_BETA };
+
     struct JointParameters
     {
         double pos_limit_min;
@@ -40,6 +43,7 @@ public:
         double transmission_ratio;
         FrictionParameters friction_parameters;
         unsigned int vel_filter_size;
+        VelFilterType vel_filter_type;
         double zero_position;
         bool set_zero_position_on_startup;
         unsigned int msg_idx;
@@ -49,6 +53,7 @@ public:
 private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_temp_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_interface_frequency_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_latency_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     rclcpp::Subscription<robot_control_msgs::msg::JointCommand>::SharedPtr joint_cmd_sub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
@@ -66,9 +71,11 @@ private:
     robot_control_msgs::msg::JointState joint_state_msg_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
+    std_msgs::msg::Float32MultiArray joint_rx_latency_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_rx_latency_msg_to_pub_;
     std::shared_mutex joint_cmd_msg_mutex_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
@@ -77,6 +84,7 @@ private:
     bool publish_ros2_joint_state_;
 
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr set_all_motors_origin_here_srv_;
+    rclcpp::Service<robot_control_msgs::srv::SetMotorOriginHere>::SharedPtr set_motor_origin_here_srv_;
 
     double default_damping_KD_;
     double friction_compensation_sign_steepness_;
@@ -93,6 +101,8 @@ private:
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
     std::vector<std::vector<MovingAverage<double>>> joint_vel_filters_per_can_interface_;
+    std::vector<std::vector<AlphaBetaFilter<double>>> joint_ab_filters_per_can_interface_;
+    std::vector<std::vector<int64_t>> last_joint_rx_ns_per_can_interface_;
 
     template <typename T>
     T declare_and_get_parameter(const std::string &name)
@@ -133,4 +143,6 @@ public:
     void can_cycle_callback(unsigned int can_interface_idx);
     void set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+    void set_motor_origin_here_callback(const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,
+                                        std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Response> response);
 };

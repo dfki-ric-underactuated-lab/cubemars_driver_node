@@ -9,6 +9,38 @@
 #include <vector>
 
 
+// Classic position-only alpha-beta filter. Assumes constant velocity between updates.
+// Uses the position measurement to correct both the position and velocity estimates.
+template <typename T>
+class AlphaBetaFilter {
+ private:
+  T alpha_;
+  T beta_;
+  T x_ = T{};
+  T v_ = T{};
+  bool initialized_ = false;
+
+ public:
+  AlphaBetaFilter(T alpha = T{1}, T beta = T{}) : alpha_(alpha), beta_(beta) {}
+
+  void update(T measurement, T dt) {
+    if (!initialized_ || dt <= T{}) {
+      x_ = measurement;
+      v_ = T{};
+      initialized_ = true;
+      return;
+    }
+    T x_pred = x_ + v_ * dt;
+    T residual = measurement - x_pred;
+    x_ = x_pred + alpha_ * residual;
+    v_ = v_ + (beta_ / dt) * residual;
+  }
+
+  T position() const { return x_; }
+  T velocity() const { return v_; }
+};
+
+
 template <typename T>
 class MovingAverage {
  private:

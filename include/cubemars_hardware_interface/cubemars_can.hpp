@@ -80,6 +80,11 @@ namespace cubemars
         can_frame recv_frame_;
 
         /**Can helper functions**/
+        // recvmsg-based receive that pulls the SO_TIMESTAMPNS ancillary data.
+        // Returns the same value as recvmsg() (bytes received, or -1 on error).
+        // rx_timestamp_ns is set to the kernel RX timestamp in CLOCK_REALTIME ns, or 0 if unavailable.
+        int recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns);
+
         void send_control_frameV2(const canid_t &can_id, const std::array<uint8_t, CAN_MAX_DLEN> &control_sequence);
 
         template <uint8_t mesage_len>

@@ -91,10 +91,49 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
         close(can_socket_fd_);
         throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
+    // enable per-frame kernel RX timestamps (CLOCK_REALTIME ns)
+    int ts_on = 1;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPNS, &ts_on, sizeof(ts_on)) < 0)
+    {
+        close(can_socket_fd_);
+        throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
+    }
 
     // setup vars
     memset(&send_frame_, 0, sizeof(send_frame_));
     send_frame_.len = CAN_MAX_DLEN;
+}
+
+int cubemars::CubemarsCan::recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns)
+{
+    struct iovec iov;
+    iov.iov_base = &frame;
+    iov.iov_len = sizeof(frame);
+    char ctrl[CMSG_SPACE(sizeof(struct timespec))];
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl;
+    msg.msg_controllen = sizeof(ctrl);
+
+    int nbytes = ::recvmsg(can_socket_fd_, &msg, 0);
+    rx_timestamp_ns = 0;
+    if (nbytes < 0)
+    {
+        return nbytes;
+    }
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c))
+    {
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SO_TIMESTAMPNS)
+        {
+            struct timespec ts;
+            memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+            rx_timestamp_ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+            break;
+        }
+    }
+    return nbytes;
 }
 
 cubemars::CubemarsCan::~CubemarsCan()
@@ -243,7 +282,8 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         recv_ok_[i] = false; // Will be set when reply is there
 
         memset(&recv_frame_, 0, CAN_MTU);
-        int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
+        int64_t rx_ns = 0;
+        int nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns);
         if (nbytes < 0)
         {
             states[i].communication_status = ComStatus::CAN_READ_FAILED;
@@ -272,6 +312,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             }
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
+            states[joint_index].rx_timestamp_ns = rx_ns;
 
             int16_t p_int = recv_frame_.data[0] << 8 | recv_frame_.data[1];
             int16_t v_int = recv_frame_.data[2] << 8 | recv_frame_.data[3];
@@ -301,6 +342,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             }
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
+            states[joint_index].rx_timestamp_ns = rx_ns;
 
             uint16_t p_int = (recv_frame_.data[1] << 8) | recv_frame_.data[2];         // Motor Position Data
             uint16_t v_int = (recv_frame_.data[3] << 4) | (recv_frame_.data[4] >> 4);  // Motor Speed Data

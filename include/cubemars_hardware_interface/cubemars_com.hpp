@@ -141,7 +141,7 @@ namespace cubemars
         float kd;
     };
 
-    struct joint_state_t 
+    struct joint_state_t
     {
         float pos;
         float vel;
@@ -150,6 +150,7 @@ namespace cubemars
         ErrorCode device_status;
         ComStatus communication_status;
         int com_errno;
+        int64_t rx_timestamp_ns;  // CLOCK_REALTIME nanoseconds of reply frame arrival
     };
 
     static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={
