@@ -41,6 +41,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_temp_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_temperatures", QOS_BEST_EFFORT_NO_DEPTH);
         can_interface_frequency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_cycle_frequencies", QOS_BEST_EFFORT_NO_DEPTH);
         joint_rx_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_rx_latencies", QOS_BEST_EFFORT_NO_DEPTH);
+        unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
+        unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         if (publish_ros2_joint_state_)
         {
             ros2_joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("~/ros2_joint_state", QOS_BEST_EFFORT_NO_DEPTH);
@@ -71,6 +73,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".vel_filter_type", std::string("moving_average"));
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".alpha", 0.85);
             this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".beta", 0.005);
+            this->declare_parameter_if_undeclared("joint_defintions." + joint_names[i] + ".pos_median_filter_size", 0);
 
             // Validate joint defintions
             auto can_interface_name = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
@@ -115,6 +118,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_parameters_per_can_interface_.resize(num_can_interfaces);
         joint_vel_filters_per_can_interface_.resize(num_can_interfaces);
         joint_ab_filters_per_can_interface_.resize(num_can_interfaces);
+        joint_pos_median_filters_per_can_interface_.resize(num_can_interfaces);
         last_joint_rx_ns_per_can_interface_.resize(num_can_interfaces);
         can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
         num_can_errors_per_interfaces_.resize(num_can_interfaces, 0);
@@ -137,6 +141,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_state_msg_.effort.resize(max_msg_idx + 1, 0.0);
         joint_temp_msg_.data.resize(max_msg_idx + 1, 0.0);
         joint_rx_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
         if (ros2_joint_state_pub_)
         {
@@ -177,6 +183,13 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             }
             double alpha = this->get_parameter("joint_defintions." + joint_names[i] + ".alpha").as_double();
             double beta = this->get_parameter("joint_defintions." + joint_names[i] + ".beta").as_double();
+            int pos_median_filter_size_raw = this->get_parameter("joint_defintions." + joint_names[i] + ".pos_median_filter_size").as_int();
+            if (pos_median_filter_size_raw < 0)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Joint %s has negative pos_median_filter_size %d", joint_names[i].c_str(), pos_median_filter_size_raw);
+                return LifecycleNodeInterface::CallbackReturn::FAILURE;
+            }
+            unsigned int pos_median_filter_size = static_cast<unsigned int>(pos_median_filter_size_raw);
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
             joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0});
@@ -191,13 +204,18 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                                                                               this->get_parameter("joint_defintions." + joint_names[i] + ".b").as_double()},
                                                                                 vel_filter_size,
                                                                              vel_filter_type,
+                                                                             pos_median_filter_size,
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".zero_position").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".set_zero_position_on_configure").as_bool(),
                                                                              static_cast<unsigned int>(msg_idx),
                                                                              joint_names[i]});
             joint_vel_filters_per_can_interface_[can_interface_id].push_back(joint_parameters_per_can_interface_[can_interface_id].back().vel_filter_size);
             joint_ab_filters_per_can_interface_[can_interface_id].emplace_back(alpha, beta);
+            joint_pos_median_filters_per_can_interface_[can_interface_id].emplace_back(pos_median_filter_size);
             last_joint_rx_ns_per_can_interface_[can_interface_id].push_back(0);
+            joint_name_to_can_iface_and_idx_[joint_names[i]] = {
+                static_cast<unsigned int>(can_interface_id),
+                static_cast<unsigned int>(joint_parameters_per_can_interface_[can_interface_id].size() - 1)};
 
             if (ros2_joint_state_pub_)
             {
@@ -275,6 +293,10 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 return LifecycleNodeInterface::CallbackReturn::ERROR;
         }
         
+        // Register runtime parameter callback now that all per-joint state is in place
+        on_set_parameters_handle_ = this->add_on_set_parameters_callback(
+            std::bind(&CubeMarsHardwareNode::on_set_parameters_callback, this, std::placeholders::_1));
+
         // Create timers that will enable all control cycles:
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
@@ -304,6 +326,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
     RCLCPP_WARN(this->get_logger(), "Cleaning up");
+    // Unregister parameter callback first so it cannot fire during teardown
+    on_set_parameters_handle_.reset();
     // Stop all times
     publish_timer_.reset();
     can_cycle_timers_per_can_interface_.clear();
@@ -344,7 +368,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_parameters_per_can_interface_.clear();
     joint_vel_filters_per_can_interface_.clear();
     joint_ab_filters_per_can_interface_.clear();
+    joint_pos_median_filters_per_can_interface_.clear();
     last_joint_rx_ns_per_can_interface_.clear();
+    joint_name_to_can_iface_and_idx_.clear();
     num_can_errors_per_interfaces_.clear();
     joint_states_per_can_interface_.clear();
     joint_commands_per_can_interface_.clear();
@@ -355,6 +381,10 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     can_interface_frequency_pub_.reset();
     joint_rx_latency_pub_.reset();
     joint_rx_latency_msg_.data.clear();
+    unfiltered_velocity_pub_.reset();
+    unfiltered_velocity_msg_.data.clear();
+    unfiltered_position_pub_.reset();
+    unfiltered_position_msg_.data.clear();
     last_can_cycle_times_.clear();
     joint_cmd_msg_mutex_.unlock();
     joint_state_msg_mutex_.unlock();
@@ -454,12 +484,15 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
     case lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED:
         // Assumption: Something went wrong during configure()
         // Configure is handling the can realted stuff so here we just have to reset the data structures
+        on_set_parameters_handle_.reset();
         joint_cmd_sub_.reset();
         publish_timer_.reset();
         joint_state_pub_.reset();
         joint_temp_pub_.reset();
         can_interface_frequency_pub_.reset();
         joint_rx_latency_pub_.reset();
+        unfiltered_velocity_pub_.reset();
+        unfiltered_position_pub_.reset();
         can_interfaces_names_.clear();
         can_cycle_callback_groups_.clear();
         joint_cmd_msg_.effort.clear();
@@ -477,8 +510,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_parameters_per_can_interface_.clear();
         joint_vel_filters_per_can_interface_.clear();
         joint_ab_filters_per_can_interface_.clear();
+        joint_pos_median_filters_per_can_interface_.clear();
         last_joint_rx_ns_per_can_interface_.clear();
+        joint_name_to_can_iface_and_idx_.clear();
         joint_rx_latency_msg_.data.clear();
+        unfiltered_velocity_msg_.data.clear();
+        unfiltered_position_msg_.data.clear();
         set_all_motors_origin_here_srv_.reset();
         set_motor_origin_here_srv_.reset();
         if (publish_ros2_joint_state_)
@@ -548,11 +585,15 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     joint_temp_msg_to_pub_ = joint_temp_msg_;
     can_interface_frequency_msg_to_pub_ = can_interface_frequency_msg_;
     joint_rx_latency_msg_to_pub_ = joint_rx_latency_msg_;
+    unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
+    unfiltered_position_msg_to_pub_ = unfiltered_position_msg_;
     joint_state_msg_mutex_.unlock();
     joint_state_pub_->publish(joint_state_msg_to_pub_); // TODO: check if this blocks and maybe avoid block during mutex
     joint_temp_pub_->publish(joint_temp_msg_to_pub_);
     can_interface_frequency_pub_->publish(can_interface_frequency_msg_to_pub_);
     joint_rx_latency_pub_->publish(joint_rx_latency_msg_to_pub_);
+    unfiltered_velocity_pub_->publish(unfiltered_velocity_msg_to_pub_);
+    unfiltered_position_pub_->publish(unfiltered_position_msg_to_pub_);
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_msg_.position = joint_state_msg_to_pub_.position;
@@ -568,6 +609,9 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     {
         return;
     }
+
+    // Block runtime parameter updates from interleaving with this cycle's reads/writes of joint params and filters.
+    std::shared_lock<std::shared_mutex> params_lock(joint_params_mutex_);
 
     auto &joint_cmds = joint_commands_per_can_interface_[can_interface_idx];
     auto &joint_states = joint_states_per_can_interface_[can_interface_idx];
@@ -709,6 +753,26 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         num_can_errors_per_interfaces_[can_interface_idx] += can_errors_in_this_cycle;
     }
 
+    // Snapshot of motor-space pos/vel before any filtering (median, MA, AB); published post-transmission below.
+    std::vector<float> unfiltered_pos_motor_space(joint_states.size());
+    std::vector<float> unfiltered_vel_motor_space(joint_states.size());
+    for (unsigned int i = 0; i < joint_states.size(); i++)
+    {
+        unfiltered_pos_motor_space[i] = joint_states[i].pos;
+        unfiltered_vel_motor_space[i] = joint_states[i].vel;
+    }
+
+    // Pre-filter: median filter on position (outlier rejection before AB sees it).
+    // Skip on comm failure so we don't feed stale or zero values into the median window.
+    for (unsigned int i = 0; i < joint_states.size(); i++)
+    {
+        if (joint_params[i].pos_median_filter_size > 1 &&
+            joint_states[i].communication_status == cubemars::ComStatus::SUCCESS)
+        {
+            joint_states[i].pos = joint_pos_median_filters_per_can_interface_[can_interface_idx][i].update(joint_states[i].pos);
+        }
+    }
+
     for(unsigned int i = 0; i < joint_states.size(); i++)
     {
         // Per-joint RX latency for diagnostics; NaN if no reply this cycle
@@ -748,6 +812,23 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
         case VelFilterType::NONE:
             break;
+        }
+    }
+
+    // Publish unfiltered pos/vel in joint-space units (same units as ~/joint_states.{position,velocity})
+    for (unsigned int i = 0; i < joint_states.size(); i++)
+    {
+        if (joint_states[i].communication_status == cubemars::ComStatus::SUCCESS)
+        {
+            unfiltered_velocity_msg_.data[joint_params[i].msg_idx] =
+                unfiltered_vel_motor_space[i] / joint_params[i].transmission_ratio;
+            unfiltered_position_msg_.data[joint_params[i].msg_idx] =
+                unfiltered_pos_motor_space[i] / joint_params[i].transmission_ratio + joint_params[i].zero_position;
+        }
+        else
+        {
+            unfiltered_velocity_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+            unfiltered_position_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
     }
 
@@ -966,6 +1047,238 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
     response->success = true;
     response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
     can_communication_mutex_.unlock();
+}
+
+bool CubeMarsHardwareNode::parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const
+{
+    static const std::string prefix = "joint_defintions.";
+    if (name.rfind(prefix, 0) != 0)
+    {
+        return false;
+    }
+    auto dot = name.find('.', prefix.size());
+    if (dot == std::string::npos)
+    {
+        return false;
+    }
+    joint_name_out = name.substr(prefix.size(), dot - prefix.size());
+    field_out = name.substr(dot + 1);
+    return !joint_name_out.empty() && !field_out.empty();
+}
+
+rcl_interfaces::msg::SetParametersResult CubeMarsHardwareNode::on_set_parameters_callback(
+    const std::vector<rclcpp::Parameter> &params)
+{
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+
+    // Per-joint pending updates, indexed by joint name
+    struct PerJointUpdate
+    {
+        std::optional<VelFilterType> vel_filter_type;
+        std::optional<int64_t> vel_filter_size;
+        std::optional<int64_t> pos_median_filter_size;
+        std::optional<double> alpha;
+        std::optional<double> beta;
+        std::optional<double> tau_c, tau_s, v_s, k, k_a, b;
+        std::optional<double> pos_limit_min, pos_limit_max;
+    };
+    std::unordered_map<std::string, PerJointUpdate> updates;
+
+    // Global pending updates
+    std::optional<double> new_default_damping_KD;
+    std::optional<bool> new_damping_on_motor_error;
+    std::optional<int64_t> new_max_can_errors;
+
+    auto fail = [&](const std::string &reason)
+    {
+        result.successful = false;
+        result.reason = reason;
+        return result;
+    };
+
+    // Pass 1: parse + per-param validation
+    for (const auto &p : params)
+    {
+        const std::string &name = p.get_name();
+        if (name == "default_damping_KD")
+        {
+            if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                return fail(name + ": must be double");
+            new_default_damping_KD = p.as_double();
+        }
+        else if (name == "damping_on_motor_error")
+        {
+            if (p.get_type() != rclcpp::ParameterType::PARAMETER_BOOL)
+                return fail(name + ": must be bool");
+            new_damping_on_motor_error = p.as_bool();
+        }
+        else if (name == "max_can_errors_before_motor_shutdown")
+        {
+            if (p.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER)
+                return fail(name + ": must be int");
+            auto v = p.as_int();
+            if (v < 1)
+                return fail(name + ": must be >= 1");
+            new_max_can_errors = v;
+        }
+        else
+        {
+            std::string joint_name, field;
+            if (!parse_per_joint_param(name, joint_name, field))
+                return fail(name + ": parameter is not dynamically reconfigurable");
+            auto it_joint = joint_name_to_can_iface_and_idx_.find(joint_name);
+            if (it_joint == joint_name_to_can_iface_and_idx_.end())
+                return fail(name + ": unknown joint '" + joint_name + "'");
+
+            auto &u = updates[joint_name];
+            if (field == "vel_filter_type")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_STRING)
+                    return fail(name + ": must be string");
+                const auto s = p.as_string();
+                if (s == "none") u.vel_filter_type = VelFilterType::NONE;
+                else if (s == "moving_average") u.vel_filter_type = VelFilterType::MOVING_AVERAGE;
+                else if (s == "alpha_beta") u.vel_filter_type = VelFilterType::ALPHA_BETA;
+                else return fail(name + ": must be 'none', 'moving_average' or 'alpha_beta'");
+            }
+            else if (field == "vel_filter_size")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER)
+                    return fail(name + ": must be int");
+                auto v = p.as_int();
+                if (v < 0)
+                    return fail(name + ": must be >= 0");
+                u.vel_filter_size = v;
+            }
+            else if (field == "pos_median_filter_size")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER)
+                    return fail(name + ": must be int");
+                auto v = p.as_int();
+                if (v < 0)
+                    return fail(name + ": must be >= 0");
+                u.pos_median_filter_size = v;
+            }
+            else if (field == "alpha")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                    return fail(name + ": must be double");
+                auto v = p.as_double();
+                if (!(v > 0.0 && v <= 1.0))
+                    return fail(name + ": must be in (0, 1]");
+                u.alpha = v;
+            }
+            else if (field == "beta")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                    return fail(name + ": must be double");
+                auto v = p.as_double();
+                if (v <= 0.0)
+                    return fail(name + ": must be > 0");
+                u.beta = v; // upper bound checked in pass 2 against effective alpha
+            }
+            else if (field == "tau_c" || field == "tau_s" || field == "v_s" || field == "k" || field == "k_a" || field == "b")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                    return fail(name + ": must be double");
+                const double v = p.as_double();
+                if (field == "tau_c") u.tau_c = v;
+                else if (field == "tau_s") u.tau_s = v;
+                else if (field == "v_s") u.v_s = v;
+                else if (field == "k") u.k = v;
+                else if (field == "k_a") u.k_a = v;
+                else u.b = v;
+            }
+            else if (field == "pos_limit_min")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                    return fail(name + ": must be double");
+                u.pos_limit_min = p.as_double();
+            }
+            else if (field == "pos_limit_max")
+            {
+                if (p.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE)
+                    return fail(name + ": must be double");
+                u.pos_limit_max = p.as_double();
+            }
+            else
+            {
+                return fail(name + ": field '" + field + "' is not dynamically reconfigurable");
+            }
+        }
+    }
+
+    // Pass 2: pairwise validation against effective post-batch values (need current values)
+    {
+        std::shared_lock<std::shared_mutex> lock(joint_params_mutex_);
+        for (const auto &[joint_name, u] : updates)
+        {
+            auto [iface, idx] = joint_name_to_can_iface_and_idx_.at(joint_name);
+            const auto &jp = joint_parameters_per_can_interface_[iface][idx];
+            const auto &ab = joint_ab_filters_per_can_interface_[iface][idx];
+
+            if (u.beta.has_value())
+            {
+                double eff_alpha = u.alpha.value_or(ab.get_alpha());
+                if (!(*u.beta < 2.0 * eff_alpha))
+                {
+                    return fail("joint_defintions." + joint_name + ".beta: must satisfy beta < 2 * alpha (effective alpha = " + std::to_string(eff_alpha) + ")");
+                }
+            }
+
+            double eff_min = u.pos_limit_min.value_or(jp.pos_limit_min);
+            double eff_max = u.pos_limit_max.value_or(jp.pos_limit_max);
+            if (eff_min > eff_max)
+            {
+                return fail("joint_defintions." + joint_name + ": pos_limit_min must be <= pos_limit_max");
+            }
+        }
+    }
+
+    // Pass 3: apply under unique lock
+    {
+        std::unique_lock<std::shared_mutex> lock(joint_params_mutex_);
+
+        if (new_default_damping_KD.has_value()) default_damping_KD_ = *new_default_damping_KD;
+        if (new_damping_on_motor_error.has_value()) damping_on_motor_error_ = *new_damping_on_motor_error;
+        if (new_max_can_errors.has_value()) max_can_errors_before_motor_shutdown_ = static_cast<unsigned int>(*new_max_can_errors);
+
+        for (const auto &[joint_name, u] : updates)
+        {
+            auto [iface, idx] = joint_name_to_can_iface_and_idx_.at(joint_name);
+            auto &jp = joint_parameters_per_can_interface_[iface][idx];
+            auto &ab = joint_ab_filters_per_can_interface_[iface][idx];
+            auto &ma = joint_vel_filters_per_can_interface_[iface][idx];
+            auto &med = joint_pos_median_filters_per_can_interface_[iface][idx];
+
+            if (u.vel_filter_type.has_value()) jp.vel_filter_type = *u.vel_filter_type;
+            if (u.vel_filter_size.has_value())
+            {
+                jp.vel_filter_size = static_cast<unsigned int>(*u.vel_filter_size);
+                ma.resize(jp.vel_filter_size);
+            }
+            if (u.pos_median_filter_size.has_value())
+            {
+                jp.pos_median_filter_size = static_cast<unsigned int>(*u.pos_median_filter_size);
+                med.resize(jp.pos_median_filter_size);
+            }
+            if (u.alpha.has_value()) ab.set_alpha(*u.alpha);
+            if (u.beta.has_value()) ab.set_beta(*u.beta);
+
+            if (u.tau_c.has_value()) jp.friction_parameters.tau_c = *u.tau_c;
+            if (u.tau_s.has_value()) jp.friction_parameters.tau_s = *u.tau_s;
+            if (u.v_s.has_value())   jp.friction_parameters.v_s   = *u.v_s;
+            if (u.k.has_value())     jp.friction_parameters.k     = *u.k;
+            if (u.k_a.has_value())   jp.friction_parameters.k_a   = *u.k_a;
+            if (u.b.has_value())     jp.friction_parameters.b     = *u.b;
+
+            if (u.pos_limit_min.has_value()) jp.pos_limit_min = *u.pos_limit_min;
+            if (u.pos_limit_max.has_value()) jp.pos_limit_max = *u.pos_limit_max;
+        }
+    }
+
+    return result;
 }
 
 int main(int argc, char **argv)

@@ -2,6 +2,7 @@
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "robot_control_msgs/msg/joint_command.hpp"
 #include "robot_control_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
@@ -10,6 +11,9 @@
 #include <mutex>
 #include <semaphore>
 #include <shared_mutex>
+#include <optional>
+#include <unordered_map>
+#include <utility>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "std_srvs/srv/trigger.hpp"
 #include "robot_control_msgs/srv/set_motor_origin_here.hpp"
@@ -44,6 +48,7 @@ public:
         FrictionParameters friction_parameters;
         unsigned int vel_filter_size;
         VelFilterType vel_filter_type;
+        unsigned int pos_median_filter_size;
         double zero_position;
         bool set_zero_position_on_startup;
         unsigned int msg_idx;
@@ -54,6 +59,8 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_temp_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_interface_frequency_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_latency_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     rclcpp::Subscription<robot_control_msgs::msg::JointCommand>::SharedPtr joint_cmd_sub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
@@ -72,10 +79,14 @@ private:
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
     std_msgs::msg::Float32MultiArray joint_rx_latency_msg_;
+    std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
+    std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_rx_latency_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
     std::shared_mutex joint_cmd_msg_mutex_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
@@ -102,7 +113,17 @@ private:
     std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
     std::vector<std::vector<MovingAverage<double>>> joint_vel_filters_per_can_interface_;
     std::vector<std::vector<AlphaBetaFilter<double>>> joint_ab_filters_per_can_interface_;
+    std::vector<std::vector<MedianFilter<double>>> joint_pos_median_filters_per_can_interface_;
     std::vector<std::vector<int64_t>> last_joint_rx_ns_per_can_interface_;
+
+    // Guards joint_parameters_per_can_interface_ and the filter vectors against
+    // concurrent reads by can_cycle_callback while the parameter callback applies updates.
+    std::shared_mutex joint_params_mutex_;
+    std::unordered_map<std::string, std::pair<unsigned int, unsigned int>> joint_name_to_can_iface_and_idx_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr on_set_parameters_handle_;
+
+    rcl_interfaces::msg::SetParametersResult on_set_parameters_callback(const std::vector<rclcpp::Parameter> &params);
+    bool parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const;
 
     template <typename T>
     T declare_and_get_parameter(const std::string &name)

@@ -38,6 +38,54 @@ class AlphaBetaFilter {
 
   T position() const { return x_; }
   T velocity() const { return v_; }
+
+  T get_alpha() const { return alpha_; }
+  T get_beta() const { return beta_; }
+  void set_alpha(T alpha) { alpha_ = alpha; }
+  void set_beta(T beta) { beta_ = beta; }
+};
+
+
+// Streaming median filter for outlier rejection. Size 0 or 1 = pass-through.
+// Uses std::nth_element on a small stack-allocated scratch buffer — O(N) per update,
+// no allocations after construction. Practical for window sizes up to ~20.
+template <typename T>
+class MedianFilter {
+ private:
+  std::vector<T> buffer_;
+  std::vector<T> scratch_;
+  unsigned int idx_ = 0;
+  unsigned int filled_ = 0;
+  unsigned int size_;
+
+ public:
+  MedianFilter(unsigned int size = 0) : size_(size) {
+    buffer_.resize(size);
+    scratch_.resize(size);
+  }
+
+  T update(T value) {
+    if (size_ <= 1) {
+      return value;
+    }
+    buffer_[idx_] = value;
+    idx_ = (idx_ + 1) % size_;
+    if (filled_ < size_) {
+      filled_++;
+    }
+    std::copy_n(buffer_.begin(), filled_, scratch_.begin());
+    const auto mid = scratch_.begin() + filled_ / 2;
+    std::nth_element(scratch_.begin(), mid, scratch_.begin() + filled_);
+    return *mid;
+  }
+
+  void resize(unsigned int size) {
+    size_ = size;
+    buffer_.assign(size, T{});
+    scratch_.assign(size, T{});
+    idx_ = 0;
+    filled_ = 0;
+  }
 };
 
 
