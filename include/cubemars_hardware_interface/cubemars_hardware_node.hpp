@@ -9,6 +9,7 @@
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <mutex>
+#include <pthread.h>
 #include <semaphore>
 #include <shared_mutex>
 #include <optional>
@@ -20,6 +21,37 @@
 #include "cubemars_hardware_interface/filters.hpp"
 
 using namespace rclcpp_lifecycle::node_interfaces;
+
+// std::shared_mutex on Linux/glibc defaults to reader-preference; with constant
+// 1 kHz x N readers in can_cycle_callback, a writer (parameter callback) can
+// starve indefinitely. This wrapper exposes the SharedMutex concept backed by a
+// pthread_rwlock_t configured with writer preference, so std::shared_lock /
+// std::unique_lock still work as drop-in.
+class WritePreferringSharedMutex
+{
+public:
+    WritePreferringSharedMutex()
+    {
+        pthread_rwlockattr_t attr;
+        pthread_rwlockattr_init(&attr);
+        pthread_rwlockattr_setkind_np(&attr, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
+        pthread_rwlock_init(&lock_, &attr);
+        pthread_rwlockattr_destroy(&attr);
+    }
+    ~WritePreferringSharedMutex() { pthread_rwlock_destroy(&lock_); }
+    WritePreferringSharedMutex(const WritePreferringSharedMutex &) = delete;
+    WritePreferringSharedMutex &operator=(const WritePreferringSharedMutex &) = delete;
+
+    void lock() { pthread_rwlock_wrlock(&lock_); }
+    bool try_lock() { return pthread_rwlock_trywrlock(&lock_) == 0; }
+    void unlock() { pthread_rwlock_unlock(&lock_); }
+    void lock_shared() { pthread_rwlock_rdlock(&lock_); }
+    bool try_lock_shared() { return pthread_rwlock_tryrdlock(&lock_) == 0; }
+    void unlock_shared() { pthread_rwlock_unlock(&lock_); }
+
+private:
+    pthread_rwlock_t lock_;
+};
 
 class CubeMarsHardwareNode : public rclcpp_lifecycle::LifecycleNode
 {
@@ -118,7 +150,9 @@ private:
 
     // Guards joint_parameters_per_can_interface_ and the filter vectors against
     // concurrent reads by can_cycle_callback while the parameter callback applies updates.
-    std::shared_mutex joint_params_mutex_;
+    // Writer-preferring to prevent the param callback from starving against the
+    // constant high-frequency readers in can_cycle_callback.
+    WritePreferringSharedMutex joint_params_mutex_;
     std::unordered_map<std::string, std::pair<unsigned int, unsigned int>> joint_name_to_can_iface_and_idx_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr on_set_parameters_handle_;
 

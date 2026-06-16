@@ -611,7 +611,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
 
     // Block runtime parameter updates from interleaving with this cycle's reads/writes of joint params and filters.
-    std::shared_lock<std::shared_mutex> params_lock(joint_params_mutex_);
+    std::shared_lock<WritePreferringSharedMutex> params_lock(joint_params_mutex_);
 
     auto &joint_cmds = joint_commands_per_can_interface_[can_interface_idx];
     auto &joint_states = joint_states_per_can_interface_[can_interface_idx];
@@ -1211,7 +1211,7 @@ rcl_interfaces::msg::SetParametersResult CubeMarsHardwareNode::on_set_parameters
 
     // Pass 2: pairwise validation against effective post-batch values (need current values)
     {
-        std::shared_lock<std::shared_mutex> lock(joint_params_mutex_);
+        std::shared_lock<WritePreferringSharedMutex> lock(joint_params_mutex_);
         for (const auto &[joint_name, u] : updates)
         {
             auto [iface, idx] = joint_name_to_can_iface_and_idx_.at(joint_name);
@@ -1238,7 +1238,7 @@ rcl_interfaces::msg::SetParametersResult CubeMarsHardwareNode::on_set_parameters
 
     // Pass 3: apply under unique lock
     {
-        std::unique_lock<std::shared_mutex> lock(joint_params_mutex_);
+        std::unique_lock<WritePreferringSharedMutex> lock(joint_params_mutex_);
 
         if (new_default_damping_KD.has_value()) default_damping_KD_ = *new_default_damping_KD;
         if (new_damping_on_motor_error.has_value()) damping_on_motor_error_ = *new_damping_on_motor_error;
