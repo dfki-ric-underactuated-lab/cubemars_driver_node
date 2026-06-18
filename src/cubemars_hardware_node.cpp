@@ -43,6 +43,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_rx_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_rx_latencies", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
+        controller_latency_pub_ = this->create_publisher<std_msgs::msg::Float32>("controller_latency_ms", QOS_BEST_EFFORT_NO_DEPTH);
         if (publish_ros2_joint_state_)
         {
             ros2_joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("~/ros2_joint_state", QOS_BEST_EFFORT_NO_DEPTH);
@@ -141,6 +142,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_state_msg_.effort.resize(max_msg_idx + 1, 0.0);
         joint_temp_msg_.data.resize(max_msg_idx + 1, 0.0);
         joint_rx_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        joint_rx_ns_.assign(max_msg_idx + 1, 0);
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
@@ -380,7 +382,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_temp_pub_.reset();
     can_interface_frequency_pub_.reset();
     joint_rx_latency_pub_.reset();
+    controller_latency_pub_.reset();
     joint_rx_latency_msg_.data.clear();
+    joint_rx_ns_.clear();
     unfiltered_velocity_pub_.reset();
     unfiltered_velocity_msg_.data.clear();
     unfiltered_position_pub_.reset();
@@ -491,6 +495,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_temp_pub_.reset();
         can_interface_frequency_pub_.reset();
         joint_rx_latency_pub_.reset();
+        controller_latency_pub_.reset();
         unfiltered_velocity_pub_.reset();
         unfiltered_position_pub_.reset();
         can_interfaces_names_.clear();
@@ -514,6 +519,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         last_joint_rx_ns_per_can_interface_.clear();
         joint_name_to_can_iface_and_idx_.clear();
         joint_rx_latency_msg_.data.clear();
+        joint_rx_ns_.clear();
         unfiltered_velocity_msg_.data.clear();
         unfiltered_position_msg_.data.clear();
         set_all_motors_origin_here_srv_.reset();
@@ -576,6 +582,14 @@ void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg:
         joint_cmd_msg_ = joint_cmd_msg;
         joint_cmd_msg_mutex_.unlock();
     }
+
+    int64_t cmd_stamp_ns = static_cast<int64_t>(joint_cmd_msg.stamp.sec) * 1000000000LL + joint_cmd_msg.stamp.nanosec;
+    if (cmd_stamp_ns > 0) // Skip unstamped commands (stamp left at zero)
+    {
+        std_msgs::msg::Float32 latency_msg;
+        latency_msg.data = static_cast<float>((this->get_clock()->now().nanoseconds() - cmd_stamp_ns) / 1e6);
+        controller_latency_pub_->publish(latency_msg);
+    }
 }
 
 void CubeMarsHardwareNode::joint_state_publish_callback()
@@ -587,7 +601,28 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     joint_rx_latency_msg_to_pub_ = joint_rx_latency_msg_;
     unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
     unfiltered_position_msg_to_pub_ = unfiltered_position_msg_;
+    // Stamp with the oldest successful reply currently in the message: a conservative
+    // freshness bound (every joint value is no older than `stamp`). The kernel RX timestamp
+    // (SO_TIMESTAMPNS, CLOCK_REALTIME ns) shares the epoch with ROS SYSTEM_TIME.
+    int64_t oldest_rx_ns = 0;
+    for (int64_t rx_ns : joint_rx_ns_)
+    {
+        if (rx_ns > 0 && (oldest_rx_ns == 0 || rx_ns < oldest_rx_ns))
+        {
+            oldest_rx_ns = rx_ns;
+        }
+    }
     joint_state_msg_mutex_.unlock();
+    if (oldest_rx_ns > 0)
+    {
+        joint_state_msg_to_pub_.stamp.sec = static_cast<int32_t>(oldest_rx_ns / 1000000000LL);
+        joint_state_msg_to_pub_.stamp.nanosec = static_cast<uint32_t>(oldest_rx_ns % 1000000000LL);
+    }
+    else
+    {
+        // No reply received yet (e.g. first cycles) - fall back to current node time.
+        joint_state_msg_to_pub_.stamp = this->get_clock()->now();
+    }
     joint_state_pub_->publish(joint_state_msg_to_pub_); // TODO: check if this blocks and maybe avoid block during mutex
     joint_temp_pub_->publish(joint_temp_msg_to_pub_);
     can_interface_frequency_pub_->publish(can_interface_frequency_msg_to_pub_);
@@ -853,6 +888,12 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_state_msg_.velocity[joint_params[i].msg_idx] = joint_states[i].vel;
         joint_state_msg_.effort[joint_params[i].msg_idx] = joint_states[i].torque;
         joint_temp_msg_.data[joint_params[i].msg_idx] = joint_states[i].temp;
+        // Only refresh the RX timestamp on a fresh reply; on comm failure the pos/vel/effort
+        // values above are stale, so we keep the joint's last successful sample time.
+        if (joint_states[i].communication_status == cubemars::ComStatus::SUCCESS)
+        {
+            joint_rx_ns_[joint_params[i].msg_idx] = joint_states[i].rx_timestamp_ns;
+        }
     }
     // Check limits
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)

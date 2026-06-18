@@ -6,6 +6,7 @@
 #include "robot_control_msgs/msg/joint_command.hpp"
 #include "robot_control_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <mutex>
@@ -94,6 +95,8 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
+    // Round-trip controller latency: now - stamp of the incoming joint_cmd, in milliseconds.
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr controller_latency_pub_;
     rclcpp::Subscription<robot_control_msgs::msg::JointCommand>::SharedPtr joint_cmd_sub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
     rclcpp::TimerBase::SharedPtr publish_timer_;
@@ -147,6 +150,9 @@ private:
     std::vector<std::vector<AlphaBetaFilter<double>>> joint_ab_filters_per_can_interface_;
     std::vector<std::vector<MedianFilter<double>>> joint_pos_median_filters_per_can_interface_;
     std::vector<std::vector<int64_t>> last_joint_rx_ns_per_can_interface_;
+    // Latest successful kernel RX timestamp (CLOCK_REALTIME ns) per msg_idx, used to
+    // stamp the aggregated joint_state_msg_. Guarded by joint_state_msg_mutex_.
+    std::vector<int64_t> joint_rx_ns_;
 
     // Guards joint_parameters_per_can_interface_ and the filter vectors against
     // concurrent reads by can_cycle_callback while the parameter callback applies updates.
