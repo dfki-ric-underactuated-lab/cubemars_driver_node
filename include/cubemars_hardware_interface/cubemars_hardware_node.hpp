@@ -9,6 +9,7 @@
 #include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
+#include <atomic>
 #include <mutex>
 #include <pthread.h>
 #include <semaphore>
@@ -92,6 +93,12 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_temp_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_interface_frequency_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_latency_pub_;
+    // Per-joint freshness of ~/joint_states at publish time: now - last successful reply RX timestamp, in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_state_age_pub_;
+    // Per-joint latency from ROS command receipt to the command frame going on the wire (software TX timestamp), in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_cmd_to_bus_latency_pub_;
+    // Per-joint motor turnaround: reply RX timestamp - command TX timestamp (time from frame on the wire to reply), in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_motor_reply_latency_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
@@ -114,12 +121,17 @@ private:
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
     std_msgs::msg::Float32MultiArray joint_rx_latency_msg_;
+    std_msgs::msg::Float32MultiArray joint_state_age_msg_;
+    std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_;
+    std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_rx_latency_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
     std::shared_mutex joint_cmd_msg_mutex_;
@@ -153,6 +165,9 @@ private:
     // Latest successful kernel RX timestamp (CLOCK_REALTIME ns) per msg_idx, used to
     // stamp the aggregated joint_state_msg_. Guarded by joint_state_msg_mutex_.
     std::vector<int64_t> joint_rx_ns_;
+    // CLOCK_REALTIME ns the most recently stored joint command was received on the ROS subscriber.
+    // Written by joint_cmd_msg_callback, read by can_cycle_callback (different callback groups).
+    std::atomic<int64_t> cmd_rx_ns_{0};
 
     // Guards joint_parameters_per_can_interface_ and the filter vectors against
     // concurrent reads by can_cycle_callback while the parameter callback applies updates.

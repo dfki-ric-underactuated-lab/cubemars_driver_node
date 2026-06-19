@@ -150,7 +150,8 @@ namespace cubemars
         ErrorCode device_status;
         ComStatus communication_status;
         int com_errno;
-        int64_t rx_timestamp_ns;  // CLOCK_REALTIME nanoseconds of reply frame arrival
+        int64_t rx_timestamp_ns;    // CLOCK_REALTIME nanoseconds of reply frame arrival (kernel RX timestamp)
+        int64_t send_timestamp_ns;  // CLOCK_REALTIME nanoseconds of command frame TX completion (kernel software TX timestamp), 0 if unavailable
     };
 
     static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={

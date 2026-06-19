@@ -85,6 +85,11 @@ namespace cubemars
         // rx_timestamp_ns is set to the kernel RX timestamp in CLOCK_REALTIME ns, or 0 if unavailable.
         int recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns);
 
+        // Drains the socket error queue (MSG_ERRQUEUE) of software TX timestamps and assigns each
+        // to the matching joint's send_timestamp_ns (matched by the echoed frame's can_id). Called
+        // after the receive loop, when the command frames have completed transmission.
+        void collect_tx_timestamps(std::vector<joint_state_t> &states);
+
         void send_control_frameV2(const canid_t &can_id, const std::array<uint8_t, CAN_MAX_DLEN> &control_sequence);
 
         template <uint8_t mesage_len>

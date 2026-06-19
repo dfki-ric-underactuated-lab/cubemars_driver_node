@@ -1,5 +1,7 @@
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include <iostream>
+#include <linux/errqueue.h>
+#include <linux/net_tstamp.h>
 
 cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials) : can_interface_(can_interface),
                                                                                                                                                                                                                       enable_loopback_(enable_loopback),
@@ -97,6 +99,14 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
     {
         close(can_socket_fd_);
         throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
+    }
+    // enable software TX timestamps (CLOCK_REALTIME ns of TX completion), reported on the error queue.
+    // Only TX flags are set, so the SO_TIMESTAMPNS RX path above is untouched.
+    int tx_ts_flags = SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &tx_ts_flags, sizeof(tx_ts_flags)) < 0)
+    {
+        close(can_socket_fd_);
+        throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING (TX) - {} ", std::string(strerror(errno))));
     }
 
     // setup vars
@@ -260,6 +270,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             break;
         }
 
+        states[i].send_timestamp_ns = 0; // Filled from the error queue in collect_tx_timestamps() once TX completes
         if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
         {
             states[i].com_errno = errno;
@@ -371,6 +382,62 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         else
         {
             states[joint_index].communication_status = ComStatus::CAN_WRITE_FAILED_BUT_RESPONSE_RECEIVED;
+        }
+    }
+    // Replies are in, so the command frames have completed transmission: pull their TX timestamps.
+    collect_tx_timestamps(states);
+}
+
+void cubemars::CubemarsCan::collect_tx_timestamps(std::vector<joint_state_t> &states)
+{
+    // Drain the error queue: each entry carries the original (echoed) command frame in the iov
+    // and an SCM_TIMESTAMPING control message whose software timestamp (ts[0]) marks TX completion.
+    while (true)
+    {
+        struct can_frame frame;
+        struct iovec iov;
+        iov.iov_base = &frame;
+        iov.iov_len = sizeof(frame);
+        char ctrl[256];
+        struct msghdr msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = ctrl;
+        msg.msg_controllen = sizeof(ctrl);
+
+        int nbytes = ::recvmsg(can_socket_fd_, &msg, MSG_ERRQUEUE | MSG_DONTWAIT);
+        if (nbytes < 0)
+        {
+            break; // EAGAIN/EWOULDBLOCK: error queue drained
+        }
+
+        int64_t tx_ns = 0;
+        for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c))
+        {
+            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMPING)
+            {
+                struct scm_timestamping tss;
+                memcpy(&tss, CMSG_DATA(c), sizeof(tss));
+                // ts[0] is the software timestamp (CLOCK_REALTIME); ts[2] would be hardware.
+                tx_ns = static_cast<int64_t>(tss.ts[0].tv_sec) * 1000000000LL + tss.ts[0].tv_nsec;
+            }
+        }
+        if (tx_ns == 0)
+        {
+            continue; // No software timestamp on this entry
+        }
+
+        // Match the echoed frame back to a joint by its can_id (same convention as the reply path).
+        canid_t can_id = (frame.can_id & CAN_EFF_FLAG) ? (frame.can_id & 0xFF) : (frame.can_id & CAN_SFF_MASK);
+        auto it = std::find_if(
+            joint_configs_.begin(),
+            joint_configs_.end(),
+            [&](const auto &conf)
+            { return conf.can_id == can_id; });
+        if (it != joint_configs_.end())
+        {
+            states[it - joint_configs_.begin()].send_timestamp_ns = tx_ns;
         }
     }
 }
