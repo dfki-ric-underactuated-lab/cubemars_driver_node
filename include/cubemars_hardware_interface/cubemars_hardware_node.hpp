@@ -118,11 +118,15 @@ private:
 
     bool damping_on_motor_error_;
     unsigned int max_can_errors_before_motor_shutdown_;
+    bool enable_tx_timestamping_; // software TX timestamps + the cmd_to_bus / motor_reply latency topics
 
     bool msg_received_;
 
 
-    robot_control_msgs::msg::JointCommand joint_cmd_msg_;
+    // Latest joint command, published lock-free by the subscriber and read by the comm threads.
+    // The message is never mutated in place; each update stores a fresh immutable copy and the
+    // atomic pointer swap is the only synchronization (no mutex, no blocking, no priority inversion).
+    std::atomic<std::shared_ptr<const robot_control_msgs::msg::JointCommand>> joint_cmd_ptr_;
     robot_control_msgs::msg::JointState joint_state_msg_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
@@ -144,7 +148,6 @@ private:
     std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
-    std::shared_mutex joint_cmd_msg_mutex_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
@@ -235,7 +238,7 @@ public:
     LifecycleNodeInterface::CallbackReturn on_shutdown(const rclcpp_lifecycle::State &previous_state) override;
 
     void watchdog_timer_callback();
-    void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand &joint_cmd_msg);
+    void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand::ConstSharedPtr &joint_cmd_msg);
     void joint_state_publish_callback();
     void can_cycle_callback(unsigned int can_interface_idx);
     void comm_loop(unsigned int can_interface_idx);

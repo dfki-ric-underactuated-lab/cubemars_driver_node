@@ -3,8 +3,9 @@
 #include <linux/errqueue.h>
 #include <linux/net_tstamp.h>
 
-cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials) : can_interface_(can_interface),
+cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping) : can_interface_(can_interface),
                                                                                                                                                                                                                       enable_loopback_(enable_loopback),
+                                                                                                                                                                                                                      enable_tx_timestamping_(enable_tx_timestamping),
                                                                                                                                                                                                                       joint_configs_(joint_configs),
                                                                                                                                                                                                                       socket_timeout_sec_(socket_timeout_sec),
                                                                                                                                                                                                                       socket_timeout_usec_(socket_timeout_usec),
@@ -100,13 +101,17 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
         close(can_socket_fd_);
         throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
     }
-    // enable software TX timestamps (CLOCK_REALTIME ns of TX completion), reported on the error queue.
-    // Only TX flags are set, so the SO_TIMESTAMPNS RX path above is untouched.
-    int tx_ts_flags = SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
-    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &tx_ts_flags, sizeof(tx_ts_flags)) < 0)
+    // Optionally enable software TX timestamps (CLOCK_REALTIME ns of TX completion), reported on
+    // the error queue. Only TX flags are set, so the SO_TIMESTAMPNS RX path above is untouched.
+    // When disabled, no error-queue entries are generated, so the per-cycle drain is skipped too.
+    if (enable_tx_timestamping_)
     {
-        close(can_socket_fd_);
-        throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING (TX) - {} ", std::string(strerror(errno))));
+        int tx_ts_flags = SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
+        if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &tx_ts_flags, sizeof(tx_ts_flags)) < 0)
+        {
+            close(can_socket_fd_);
+            throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING (TX) - {} ", std::string(strerror(errno))));
+        }
     }
 
     // setup vars
@@ -401,7 +406,10 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
     clock_gettime(CLOCK_REALTIME, &ts_now);
     rx_duration_ns_ = (static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec) - tx_fill_end_ns_;
     // Replies are in, so the command frames have completed transmission: pull their TX timestamps.
-    collect_tx_timestamps(states);
+    if (enable_tx_timestamping_)
+    {
+        collect_tx_timestamps(states);
+    }
 }
 
 void cubemars::CubemarsCan::collect_tx_timestamps(std::vector<joint_state_t> &states)

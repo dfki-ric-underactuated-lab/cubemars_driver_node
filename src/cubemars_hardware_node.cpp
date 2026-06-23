@@ -19,6 +19,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("damping_on_motor_error", true);
     this->declare_parameter_if_undeclared("max_can_errors_before_motor_shutdown", 1);
     this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
+    this->declare_parameter_if_undeclared("enable_tx_timestamping", true);
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -29,6 +30,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     {
         damping_on_motor_error_ =this->get_parameter("damping_on_motor_error").as_bool();
         max_can_errors_before_motor_shutdown_ = this->get_parameter("max_can_errors_before_motor_shutdown").as_int();
+        enable_tx_timestamping_ = this->get_parameter("enable_tx_timestamping").as_bool();
 
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
@@ -44,8 +46,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_rx_duration_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_rx_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_reply_after_tx_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_reply_after_tx_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_state_age_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_state_ages_us", QOS_BEST_EFFORT_NO_DEPTH);
-        joint_cmd_to_bus_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_cmd_to_bus_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
-        joint_motor_reply_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_motor_reply_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
+        if (enable_tx_timestamping_)
+        {
+            // These two depend on the software TX timestamp; only published when it's enabled.
+            joint_cmd_to_bus_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_cmd_to_bus_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
+            joint_motor_reply_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_motor_reply_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
+        }
         unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         controller_latency_pub_ = this->create_publisher<std_msgs::msg::Float32>("controller_latency_us", QOS_BEST_EFFORT_NO_DEPTH);
@@ -140,11 +146,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_rx_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
 
         // Prepare messages
-        joint_cmd_msg_.effort.resize(max_msg_idx + 1, 0.0);
-        joint_cmd_msg_.velocity.resize(max_msg_idx + 1, 0.0);
-        joint_cmd_msg_.position.resize(max_msg_idx + 1, 0.0);
-        joint_cmd_msg_.kd.resize(max_msg_idx + 1, 0.0);
-        joint_cmd_msg_.kp.resize(max_msg_idx + 1, 0.0);
+        // Initial command: all zero (free / no torque) until the first real command arrives.
+        auto init_cmd = std::make_shared<robot_control_msgs::msg::JointCommand>();
+        init_cmd->effort.assign(max_msg_idx + 1, 0.0);
+        init_cmd->velocity.assign(max_msg_idx + 1, 0.0);
+        init_cmd->position.assign(max_msg_idx + 1, 0.0);
+        init_cmd->kd.assign(max_msg_idx + 1, 0.0);
+        init_cmd->kp.assign(max_msg_idx + 1, 0.0);
+        joint_cmd_ptr_.store(init_cmd);
         joint_state_msg_.position.resize(max_msg_idx + 1, 0.0);
         joint_state_msg_.velocity.resize(max_msg_idx + 1, 0.0);
         joint_state_msg_.effort.resize(max_msg_idx + 1, 0.0);
@@ -246,7 +255,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 joint_configs_per_can_interface[can_interface_id],
                 this->get_parameter("can_socket_timeout_sec").as_int(),
                 this->get_parameter("can_socket_timeout_usec").as_int(),
-                this->get_parameter("can_initial_connection_trials").as_int()
+                this->get_parameter("can_initial_connection_trials").as_int(),
+                enable_tx_timestamping_
             );
         }
 
@@ -354,8 +364,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     stop_all_comm_threads();
     comm_threads_.clear();
 
-    can_communication_mutex_.lock();
-    joint_cmd_msg_mutex_.lock(); // Nobody can enter
+    can_communication_mutex_.lock(); // Nobody can enter
     joint_state_msg_mutex_.lock();
     bool success = true;
     // Disbale all motors
@@ -419,14 +428,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     unfiltered_position_pub_.reset();
     unfiltered_position_msg_.data.clear();
     last_can_cycle_times_.clear();
-    joint_cmd_msg_mutex_.unlock();
     joint_state_msg_mutex_.unlock();
     can_communication_mutex_.unlock();
-    joint_cmd_msg_.effort.clear();
-    joint_cmd_msg_.velocity.clear();
-    joint_cmd_msg_.position.clear();
-    joint_cmd_msg_.kd.clear();
-    joint_cmd_msg_.kp.clear();
+    joint_cmd_ptr_.store(nullptr); // comm threads already joined, so no reader is active
     joint_state_msg_.position.clear();
     joint_state_msg_.velocity.clear();
     joint_state_msg_.effort.clear();
@@ -462,17 +466,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_activate([[maybe
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_deactivate([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
-    // The motors have to be send into damping
-    joint_cmd_msg_mutex_.lock();
-    for (unsigned int i = 0; i < joint_cmd_msg_.position.size(); i++)
-    {
-        joint_cmd_msg_.effort[i] = 0.0;
-        joint_cmd_msg_.velocity[i] = 0.0;
-        joint_cmd_msg_.position[i] = 0.0;
-        joint_cmd_msg_.kp[i] = 0.0;
-        joint_cmd_msg_.kd[i] = default_damping_KD_;
-    }
-    joint_cmd_msg_mutex_.unlock();
+    // The motors have to be send into damping: publish a fresh command with kd = damping, rest 0.
+    auto damping = std::make_shared<robot_control_msgs::msg::JointCommand>();
+    damping->effort.assign(joint_msg_length_, 0.0);
+    damping->velocity.assign(joint_msg_length_, 0.0);
+    damping->position.assign(joint_msg_length_, 0.0);
+    damping->kp.assign(joint_msg_length_, 0.0);
+    damping->kd.assign(joint_msg_length_, default_damping_KD_);
+    joint_cmd_ptr_.store(damping);
     watchdog_timer_.reset();
     msg_received_ = false;
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
@@ -535,11 +536,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         can_interfaces_names_.clear();
         stop_all_comm_threads(); // join any comm threads started before configure() failed
         comm_threads_.clear();
-        joint_cmd_msg_.effort.clear();
-        joint_cmd_msg_.velocity.clear();
-        joint_cmd_msg_.position.clear();
-        joint_cmd_msg_.kd.clear();
-        joint_cmd_msg_.kp.clear();
+        joint_cmd_ptr_.store(nullptr);
         joint_state_msg_.position.clear();
         joint_state_msg_.velocity.clear();
         joint_state_msg_.effort.clear();
@@ -601,14 +598,14 @@ void CubeMarsHardwareNode::watchdog_timer_callback()
     msg_received_ = false;
 }
 
-void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand &joint_cmd_msg)
+void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand::ConstSharedPtr &joint_cmd_msg)
 {
 
-    if (joint_cmd_msg.position.size() != joint_msg_length_ ||
-        joint_cmd_msg.velocity.size() != joint_msg_length_ ||
-        joint_cmd_msg.effort.size() != joint_msg_length_ ||
-        joint_cmd_msg.kp.size() != joint_msg_length_ ||
-        joint_cmd_msg.kd.size() != joint_msg_length_)
+    if (joint_cmd_msg->position.size() != joint_msg_length_ ||
+        joint_cmd_msg->velocity.size() != joint_msg_length_ ||
+        joint_cmd_msg->effort.size() != joint_msg_length_ ||
+        joint_cmd_msg->kp.size() != joint_msg_length_ ||
+        joint_cmd_msg->kd.size() != joint_msg_length_)
     {
         RCLCPP_ERROR(this->get_logger(), "Received joint_cmd_msg with array sizes unequal to %i, skipping this message", joint_msg_length_);
         return;
@@ -624,12 +621,11 @@ void CubeMarsHardwareNode::joint_cmd_msg_callback(const robot_control_msgs::msg:
         clock_gettime(CLOCK_REALTIME, &cmd_rx_ts);
         cmd_rx_ns_.store(static_cast<int64_t>(cmd_rx_ts.tv_sec) * 1000000000LL + cmd_rx_ts.tv_nsec, std::memory_order_relaxed);
 
-        joint_cmd_msg_mutex_.lock();
-        joint_cmd_msg_ = joint_cmd_msg;
-        joint_cmd_msg_mutex_.unlock();
+        // Publish the new command lock-free: store the shared_ptr rclcpp gave us directly (no copy).
+        joint_cmd_ptr_.store(joint_cmd_msg);
     }
 
-    int64_t cmd_stamp_ns = static_cast<int64_t>(joint_cmd_msg.stamp.sec) * 1000000000LL + joint_cmd_msg.stamp.nanosec;
+    int64_t cmd_stamp_ns = static_cast<int64_t>(joint_cmd_msg->stamp.sec) * 1000000000LL + joint_cmd_msg->stamp.nanosec;
     if (cmd_stamp_ns > 0) // Skip unstamped commands (stamp left at zero)
     {
         std_msgs::msg::Float32 latency_msg;
@@ -685,8 +681,11 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     can_rx_duration_pub_->publish(can_rx_duration_msg_to_pub_);
     joint_reply_after_tx_pub_->publish(joint_reply_after_tx_msg_to_pub_);
     joint_state_age_pub_->publish(joint_state_age_msg_);
-    joint_cmd_to_bus_latency_pub_->publish(joint_cmd_to_bus_latency_msg_to_pub_);
-    joint_motor_reply_latency_pub_->publish(joint_motor_reply_latency_msg_to_pub_);
+    if (joint_cmd_to_bus_latency_pub_) // only created when TX timestamping is enabled
+    {
+        joint_cmd_to_bus_latency_pub_->publish(joint_cmd_to_bus_latency_msg_to_pub_);
+        joint_motor_reply_latency_pub_->publish(joint_motor_reply_latency_msg_to_pub_);
+    }
     unfiltered_velocity_pub_->publish(unfiltered_velocity_msg_to_pub_);
     unfiltered_position_pub_->publish(unfiltered_position_msg_to_pub_);
     if (publish_ros2_joint_state_)
@@ -790,22 +789,24 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     double can_cyle_frequency = 1.0 / dt;
     last_can_cycle_times_[can_interface_idx] = current_time;
 
-    // Collect data
-    joint_cmd_msg_mutex_.lock_shared();
+    // Collect data: lock-free load of the latest command (an immutable snapshot).
     if (!comm_threads_[can_interface_idx]->running.load(std::memory_order_relaxed))
     {
-        joint_cmd_msg_mutex_.unlock_shared();
         return; // Stop was requested mid-cycle
+    }
+    auto cmd = joint_cmd_ptr_.load();
+    if (!cmd)
+    {
+        return; // No command published yet (e.g. torn down)
     }
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
     {
-        joint_cmds[i].kd = joint_cmd_msg_.kd[joint_params[i].msg_idx];
-        joint_cmds[i].kp = joint_cmd_msg_.kp[joint_params[i].msg_idx];
-        joint_cmds[i].pos = joint_cmd_msg_.position[joint_params[i].msg_idx] - joint_params[i].zero_position;
-        joint_cmds[i].vel = joint_cmd_msg_.velocity[joint_params[i].msg_idx];
-        joint_cmds[i].torque = joint_cmd_msg_.effort[joint_params[i].msg_idx];
+        joint_cmds[i].kd = cmd->kd[joint_params[i].msg_idx];
+        joint_cmds[i].kp = cmd->kp[joint_params[i].msg_idx];
+        joint_cmds[i].pos = cmd->position[joint_params[i].msg_idx] - joint_params[i].zero_position;
+        joint_cmds[i].vel = cmd->velocity[joint_params[i].msg_idx];
+        joint_cmds[i].torque = cmd->effort[joint_params[i].msg_idx];
     }
-    joint_cmd_msg_mutex_.unlock_shared();
 
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
     {
