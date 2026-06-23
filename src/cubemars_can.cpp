@@ -188,6 +188,9 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
     {
         throw std::out_of_range("cmds, states have to have the correct size of " + joint_configs_.size());
     }
+    struct timespec ts_now;
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    int64_t tx_fill_start_ns = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
     // Write all cmds
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
@@ -271,6 +274,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         }
 
         states[i].send_timestamp_ns = 0; // Filled from the error queue in collect_tx_timestamps() once TX completes
+        states[i].dequeue_timestamp_ns = 0; // Filled in the receive loop below when the reply is read
         if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
         {
             states[i].com_errno = errno;
@@ -283,6 +287,10 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             states[i].communication_status = ComStatus::CAN_NO_RESPONSE; // Will be updated when reply is there
         }
     }
+    // TX buffer is now filled with all command frames.
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    tx_fill_end_ns_ = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
+    tx_fill_duration_ns_ = tx_fill_end_ns_ - tx_fill_start_ns;
     // Receive all commands
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
@@ -301,6 +309,9 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             states[i].com_errno = errno;
             continue;
         }
+        // Userspace arrival ("node space") of this reply
+        clock_gettime(CLOCK_REALTIME, &ts_now);
+        int64_t deq_ns = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
         unsigned int joint_index = 0;
         // The v2 motors reply with standard CAN IDs, the v3 motors with extended CAN IDs
         if ((recv_frame_.can_id & CAN_EFF_FLAG))
@@ -324,6 +335,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
             states[joint_index].rx_timestamp_ns = rx_ns;
+            states[joint_index].dequeue_timestamp_ns = deq_ns;
 
             int16_t p_int = recv_frame_.data[0] << 8 | recv_frame_.data[1];
             int16_t v_int = recv_frame_.data[2] << 8 | recv_frame_.data[3];
@@ -354,6 +366,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
             states[joint_index].rx_timestamp_ns = rx_ns;
+            states[joint_index].dequeue_timestamp_ns = deq_ns;
 
             uint16_t p_int = (recv_frame_.data[1] << 8) | recv_frame_.data[2];         // Motor Position Data
             uint16_t v_int = (recv_frame_.data[3] << 4) | (recv_frame_.data[4] >> 4);  // Motor Speed Data
@@ -384,6 +397,9 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             states[joint_index].communication_status = ComStatus::CAN_WRITE_FAILED_BUT_RESPONSE_RECEIVED;
         }
     }
+    // All replies have been received (or timed out): duration of the receive phase since the TX buffer was filled.
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    rx_duration_ns_ = (static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec) - tx_fill_end_ns_;
     // Replies are in, so the command frames have completed transmission: pull their TX timestamps.
     collect_tx_timestamps(states);
 }

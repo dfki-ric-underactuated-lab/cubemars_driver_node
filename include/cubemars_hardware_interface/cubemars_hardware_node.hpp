@@ -92,7 +92,12 @@ public:
 private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_temp_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_interface_frequency_pub_;
-    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_latency_pub_;
+    // Per-CAN-interface: time to write all command frames into the TX buffer, in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_tx_fill_duration_pub_;
+    // Per-CAN-interface: time to receive all replies after the TX buffer was filled, in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_rx_duration_pub_;
+    // Per-joint: time from the TX buffer being filled to that motor's reply arriving in node space, in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_reply_after_tx_pub_;
     // Per-joint freshness of ~/joint_states at publish time: now - last successful reply RX timestamp, in us.
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_state_age_pub_;
     // Per-joint latency from ROS command receipt to the command frame going on the wire (software TX timestamp), in us.
@@ -120,7 +125,9 @@ private:
     robot_control_msgs::msg::JointState joint_state_msg_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_;
-    std_msgs::msg::Float32MultiArray joint_rx_latency_msg_;
+    std_msgs::msg::Float32MultiArray can_tx_fill_duration_msg_;
+    std_msgs::msg::Float32MultiArray can_rx_duration_msg_;
+    std_msgs::msg::Float32MultiArray joint_reply_after_tx_msg_;
     std_msgs::msg::Float32MultiArray joint_state_age_msg_;
     std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_;
     std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_;
@@ -129,7 +136,9 @@ private:
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
-    std_msgs::msg::Float32MultiArray joint_rx_latency_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray can_tx_fill_duration_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray can_rx_duration_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_reply_after_tx_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;

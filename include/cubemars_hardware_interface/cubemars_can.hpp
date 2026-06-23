@@ -64,6 +64,11 @@ namespace cubemars
             return joint_configs_.at(joint_index).can_id;
         }
 
+        // Diagnostics from the last send_and_receive() (CLOCK_REALTIME ns):
+        int64_t get_tx_fill_duration_ns() const { return tx_fill_duration_ns_; } // time to write all command frames to the TX buffer
+        int64_t get_rx_duration_ns() const { return rx_duration_ns_; }           // time to receive all replies after the TX buffer was filled
+        int64_t get_tx_fill_end_ns() const { return tx_fill_end_ns_; }           // timestamp the TX buffer finished being filled (reference for per-motor reply timing)
+
         virtual ~CubemarsCan();
 
     private:
@@ -75,6 +80,9 @@ namespace cubemars
         unsigned int max_initial_connection_trials_;
         std::vector<bool> send_ok_;
         std::vector<bool> recv_ok_;
+        int64_t tx_fill_duration_ns_ = 0;
+        int64_t rx_duration_ns_ = 0;
+        int64_t tx_fill_end_ns_ = 0;
         int can_socket_fd_;
         can_frame send_frame_;
         can_frame recv_frame_;
