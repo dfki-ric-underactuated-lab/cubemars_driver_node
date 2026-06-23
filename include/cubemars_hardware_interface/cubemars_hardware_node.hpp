@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <semaphore>
 #include <shared_mutex>
+#include <thread>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -162,11 +163,22 @@ private:
     std::vector<std::vector<cubemars::joint_cmd_t>> joint_commands_per_can_interface_;
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
-    std::vector<rclcpp::TimerBase::SharedPtr> can_cycle_timers_per_can_interface_;
     std::vector<unsigned int> num_can_errors_per_interfaces_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
-    std::vector<rclcpp::CallbackGroup::SharedPtr> can_cycle_callback_groups_;
+
+    // One dedicated thread per CAN interface running the send/receive cycle back-to-back,
+    // instead of a ROS timer dispatched by the executor (removes per-cycle dispatch latency).
+    struct CommThread
+    {
+        std::thread thread;
+        std::atomic<bool> running{false};
+    };
+    std::vector<std::unique_ptr<CommThread>> comm_threads_; // unique_ptr: std::atomic is not movable
+    // Set by a comm thread on a fatal error in INACTIVE state; the supervisor timer (executor
+    // thread) performs the actual cleanup() so the comm thread never joins itself.
+    std::atomic<bool> cleanup_requested_{false};
+    rclcpp::TimerBase::SharedPtr supervisor_timer_;
     std::vector<std::vector<MovingAverage<double>>> joint_vel_filters_per_can_interface_;
     std::vector<std::vector<AlphaBetaFilter<double>>> joint_ab_filters_per_can_interface_;
     std::vector<std::vector<MedianFilter<double>>> joint_pos_median_filters_per_can_interface_;
@@ -226,6 +238,11 @@ public:
     void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand &joint_cmd_msg);
     void joint_state_publish_callback();
     void can_cycle_callback(unsigned int can_interface_idx);
+    void comm_loop(unsigned int can_interface_idx);
+    void start_comm_thread(unsigned int can_interface_idx);
+    void stop_comm_thread(unsigned int can_interface_idx);
+    void stop_all_comm_threads();
+    void supervisor_callback();
     void set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void set_motor_origin_here_callback(const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,

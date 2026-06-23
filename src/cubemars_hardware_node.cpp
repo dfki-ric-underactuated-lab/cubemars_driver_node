@@ -126,13 +126,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_ab_filters_per_can_interface_.resize(num_can_interfaces);
         joint_pos_median_filters_per_can_interface_.resize(num_can_interfaces);
         last_joint_rx_ns_per_can_interface_.resize(num_can_interfaces);
-        can_cycle_timers_per_can_interface_.resize(num_can_interfaces);
         num_can_errors_per_interfaces_.resize(num_can_interfaces, 0);
         can_interfaces_.resize(num_can_interfaces);
         last_can_cycle_times_.resize(num_can_interfaces, this->get_clock()->now());
+        // One comm thread object per interface (threads spawned later, after motors are enabled).
+        comm_threads_.resize(num_can_interfaces);
         for (unsigned int i = 0; i < num_can_interfaces; i++)
         {
-            can_cycle_callback_groups_.push_back(this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive));
+            comm_threads_[i] = std::make_unique<CommThread>();
         }
         can_interface_frequency_msg_.data.resize(num_can_interfaces, 0.0);
         can_tx_fill_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
@@ -309,12 +310,18 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         on_set_parameters_handle_ = this->add_on_set_parameters_callback(
             std::bind(&CubeMarsHardwareNode::on_set_parameters_callback, this, std::placeholders::_1));
 
-        // Create timers that will enable all control cycles:
+        // Supervisor on the executor: performs cleanup() when a comm thread requests it (a comm
+        // thread can't cleanup() itself, as that would join its own thread). Created once and
+        // kept for the node's lifetime; harmless while unconfigured (the flag is false).
+        if (!supervisor_timer_)
+        {
+            supervisor_timer_ = this->create_timer(watchdog_frequency_, std::bind(&CubeMarsHardwareNode::supervisor_callback, this));
+        }
+
+        // Start one dedicated comm thread per interface (each loops send_and_receive back-to-back).
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
-            // Create all Can cyle timer
-            can_cycle_timers_per_can_interface_[i] = this->create_timer(frequency_, [i, this]()
-                                                                        { this->can_cycle_callback(i); }, can_cycle_callback_groups_[i]);
+            start_comm_thread(i);
         }
     }
     catch (rclcpp::exceptions::ParameterUninitializedException &exception)
@@ -340,10 +347,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     RCLCPP_WARN(this->get_logger(), "Cleaning up");
     // Unregister parameter callback first so it cannot fire during teardown
     on_set_parameters_handle_.reset();
-    // Stop all times
+    // Stop all timers and comm threads. Joining the comm threads BEFORE taking the mutexes is
+    // essential: a thread mid-cycle holds can_communication_mutex_ shared, so locking it
+    // exclusive before the join would deadlock.
     publish_timer_.reset();
-    can_cycle_timers_per_can_interface_.clear();
-    can_cycle_callback_groups_.clear();
+    stop_all_comm_threads();
+    comm_threads_.clear();
 
     can_communication_mutex_.lock();
     joint_cmd_msg_mutex_.lock(); // Nobody can enter
@@ -524,7 +533,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         unfiltered_velocity_pub_.reset();
         unfiltered_position_pub_.reset();
         can_interfaces_names_.clear();
-        can_cycle_callback_groups_.clear();
+        stop_all_comm_threads(); // join any comm threads started before configure() failed
+        comm_threads_.clear();
         joint_cmd_msg_.effort.clear();
         joint_cmd_msg_.velocity.clear();
         joint_cmd_msg_.position.clear();
@@ -688,6 +698,78 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     }
 }
 
+void CubeMarsHardwareNode::comm_loop(unsigned int can_interface_idx)
+{
+    // Run the send/receive cycle back-to-back until asked to stop. Free-runs at the bus's
+    // natural rate; no executor dispatch between cycles.
+    while (comm_threads_[can_interface_idx]->running.load(std::memory_order_relaxed))
+    {
+        can_cycle_callback(can_interface_idx);
+    }
+}
+
+void CubeMarsHardwareNode::start_comm_thread(unsigned int can_interface_idx)
+{
+    auto &ct = comm_threads_[can_interface_idx];
+    if (ct->running.load())
+    {
+        return; // already running
+    }
+    if (ct->thread.joinable())
+    {
+        ct->thread.join(); // join a previous (stopped) instance before respawning
+    }
+    ct->running.store(true);
+    ct->thread = std::thread(&CubeMarsHardwareNode::comm_loop, this, can_interface_idx);
+    // Run the comm loop at real-time priority (best effort, like main()).
+    sched_param sch;
+    sch.sched_priority = 80;
+    if (pthread_setschedparam(ct->thread.native_handle(), SCHED_FIFO, &sch) != 0)
+    {
+        RCLCPP_WARN(this->get_logger(), "Failed to set RT priority on comm thread for can interface %i", can_interface_idx);
+    }
+}
+
+void CubeMarsHardwareNode::stop_comm_thread(unsigned int can_interface_idx)
+{
+    auto &ct = comm_threads_[can_interface_idx];
+    ct->running.store(false);
+    if (ct->thread.joinable())
+    {
+        ct->thread.join();
+    }
+}
+
+void CubeMarsHardwareNode::stop_all_comm_threads()
+{
+    // Signal all to stop first, then join, so they wind down in parallel (not one-by-one).
+    for (auto &ct : comm_threads_)
+    {
+        if (ct)
+        {
+            ct->running.store(false);
+        }
+    }
+    for (auto &ct : comm_threads_)
+    {
+        if (ct && ct->thread.joinable())
+        {
+            ct->thread.join();
+        }
+    }
+}
+
+void CubeMarsHardwareNode::supervisor_callback()
+{
+    // A comm thread cannot run cleanup() (it would join itself); it requests it here and the
+    // executor thread performs the transition.
+    if (cleanup_requested_.exchange(false))
+    {
+        RCLCPP_ERROR(this->get_logger(), "Comm thread requested cleanup after a fatal error; cleaning up");
+        cleanup();
+    }
+}
+
 void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
 {
     if (!(this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE || this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE))
@@ -710,10 +792,10 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
 
     // Collect data
     joint_cmd_msg_mutex_.lock_shared();
-    if (can_cycle_timers_per_can_interface_.size() == 0)
+    if (!comm_threads_[can_interface_idx]->running.load(std::memory_order_relaxed))
     {
         joint_cmd_msg_mutex_.unlock_shared();
-        return; // If unconfigured in the meantime
+        return; // Stop was requested mid-cycle
     }
     for (unsigned int i = 0; i < joint_cmds.size(); i++)
     {
@@ -777,8 +859,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         else
         {
             // TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
-            RCLCPP_ERROR(this->get_logger(), "For safety reasons cleanup() motors into OFF (can process %i)", can_interface_idx);
-            cleanup();
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() motors into OFF (can process %i)", can_interface_idx);
+            cleanup_requested_.store(true); // supervisor (executor thread) runs cleanup(); a comm thread must not join itself
             return;
         }
     }
@@ -822,8 +904,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         else
         {
             // TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
-            RCLCPP_ERROR(this->get_logger(), "For safety reasons cleanup() motors into OFF (can process %i)", can_interface_idx);
-            cleanup();
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() motors into OFF (can process %i)", can_interface_idx);
+            cleanup_requested_.store(true); // supervisor (executor thread) runs cleanup(); a comm thread must not join itself
             return;
         }
 
@@ -912,10 +994,10 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
 
     // Write back state
     joint_state_msg_mutex_.lock_shared();
-    if (can_cycle_timers_per_can_interface_.size() == 0)
+    if (!comm_threads_[can_interface_idx]->running.load(std::memory_order_relaxed))
     {
         joint_state_msg_mutex_.unlock_shared();
-        return; // If unconfigured in the meantime
+        return; // Stop was requested mid-cycle
     }
     int64_t cmd_rx_ns = cmd_rx_ns_.load(std::memory_order_relaxed);
     int64_t tx_fill_end_ns = can_interfaces_[can_interface_idx]->get_tx_fill_end_ns();
@@ -1007,10 +1089,8 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
         response->message = "Node not in CONFIGURED state";
         return;
     }
-    for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-    {
-        can_cycle_timers_per_can_interface_[i].reset();
-    }
+    // Pause all comm threads (join) before grabbing the bus exclusively for calibration.
+    stop_all_comm_threads();
     can_communication_mutex_.lock();
 
     for (unsigned int i = 0; i < can_interfaces_.size(); i++)
@@ -1050,11 +1130,10 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
             cleanup();
         }
     }
+    // Resume the comm threads after calibration (skipped if cleanup() emptied can_interfaces_).
     for (unsigned int i = 0; i < can_interfaces_.size(); i++)
     {
-        // Create all Can cyle timer
-        can_cycle_timers_per_can_interface_[i] = this->create_timer(frequency_, [i, this]()
-                                                                    { this->can_cycle_callback(i); }, can_cycle_callback_groups_[i]);
+        start_comm_thread(i);
     }
     response->success = true;
     response->message = "All motors set to origin";
@@ -1103,8 +1182,8 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
 
     unsigned int iface = static_cast<unsigned int>(target_can_interface_id);
 
-    // Stop the CAN cycle timer for the target interface
-    can_cycle_timers_per_can_interface_[iface].reset();
+    // Pause the comm thread for the target interface (join) before grabbing the bus.
+    stop_comm_thread(iface);
 
     can_communication_mutex_.lock();
 
@@ -1154,9 +1233,8 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
         return;
     }
 
-    // Recreate the CAN cycle timer for the target interface
-    can_cycle_timers_per_can_interface_[iface] = this->create_timer(frequency_, [iface, this]()
-                                                                    { this->can_cycle_callback(iface); }, can_cycle_callback_groups_[iface]);
+    // Resume the comm thread for the target interface.
+    start_comm_thread(iface);
     response->success = true;
     response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
     can_communication_mutex_.unlock();
@@ -1404,7 +1482,16 @@ int main(int argc, char **argv)
         RCLCPP_WARN(rclcpp::get_logger("PrioritySetter"), "Failed to set thread priority");
     }
     auto node = std::make_shared<CubeMarsHardwareNode>();
-    rclcpp::executors::MultiThreadedExecutor executor; // TODO: specify more threads
+    // Each CAN interface's cycle callback blocks in send_and_receive while holding an executor
+    // thread, so we need at least one thread per bus plus a few for publishing/watchdog/services.
+    // Threads parked in recv cost no CPU, so over-provisioning is safe. Override via the
+    // 'executor_threads' parameter (default 12; raise if you add buses).
+    int num_threads = node->declare_parameter<int>("executor_threads", 12);
+    if (num_threads < 2)
+    {
+        num_threads = 2;
+    }
+    rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), static_cast<size_t>(num_threads));
     RCLCPP_INFO(node->get_logger(), "Node is running on %li threads", executor.get_number_of_threads());
     executor.add_node(node->get_node_base_interface());
     executor.spin(); // Call back because of CTRL_C brings us over this
