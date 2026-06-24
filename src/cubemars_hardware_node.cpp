@@ -1024,12 +1024,18 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
     int64_t cmd_rx_ns = cmd_rx_ns_.load(std::memory_order_relaxed);
     int64_t tx_fill_end_ns = can_interfaces_[can_interface_idx]->get_tx_fill_end_ns();
+    unsigned int tx_ts_missing = 0; // joints that got a reply but no software TX timestamp
     for (unsigned int i = 0; i < joint_states.size(); i++)
     {
         joint_state_msg_.position[joint_params[i].msg_idx] = joint_states[i].pos + joint_params[i].zero_position;
         joint_state_msg_.velocity[joint_params[i].msg_idx] = joint_states[i].vel;
         joint_state_msg_.effort[joint_params[i].msg_idx] = joint_states[i].torque;
         joint_temp_msg_.data[joint_params[i].msg_idx] = joint_states[i].temp;
+        // A joint that replied was definitely sent, so it should have a TX timestamp if gathering works.
+        if (enable_tx_timestamping_ && joint_states[i].communication_status == cubemars::ComStatus::SUCCESS && joint_states[i].send_timestamp_ns == 0)
+        {
+            tx_ts_missing++;
+        }
         // Only refresh the RX timestamp on a fresh reply; on comm failure the pos/vel/effort
         // values above are stale, so we keep the joint's last successful sample time.
         if (joint_states[i].communication_status == cubemars::ComStatus::SUCCESS)
@@ -1117,6 +1123,17 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     int64_t cycle_total_ns = (static_cast<int64_t>(cycle_end_ts.tv_sec) * 1000000000LL + cycle_end_ts.tv_nsec) - cycle_entry_ns;
     can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
     joint_state_msg_mutex_.unlock_shared();
+
+    // Warn if TX timestamping is on but no software TX timestamp came back for replied joints.
+    // The drained-entry count distinguishes "nothing delivered" from "delivered but unmatched".
+    if (tx_ts_missing > 0)
+    {
+        unsigned int drained = can_interfaces_[can_interface_idx]->get_last_tx_errq_count();
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "Software TX timestamp missing for %u replied joint(s) on can interface %s (error-queue entries drained this cycle: %u). "
+            "If drained==0 the kernel delivered no TX timestamps (check CAN_RAW loopback / SO_TIMESTAMPING); if >0 the can_id match is failing.",
+            tx_ts_missing, can_interfaces_[can_interface_idx]->GetName().c_str(), drained);
+    }
 }
 
 void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,

@@ -421,6 +421,7 @@ void cubemars::CubemarsCan::collect_tx_timestamps(std::vector<joint_state_t> &st
 {
     // Drain the error queue: each entry carries the original (echoed) command frame in the iov
     // and an SCM_TIMESTAMPING control message whose software timestamp (ts[0]) marks TX completion.
+    last_tx_errq_count_ = 0;
     while (true)
     {
         struct can_frame frame;
@@ -440,6 +441,7 @@ void cubemars::CubemarsCan::collect_tx_timestamps(std::vector<joint_state_t> &st
         {
             break; // EAGAIN/EWOULDBLOCK: error queue drained
         }
+        last_tx_errq_count_++; // an entry was present on the error queue
 
         int64_t tx_ns = 0;
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c))
