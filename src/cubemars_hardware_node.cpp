@@ -192,6 +192,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_motor_reply_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_enqueue_to_wire_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_rx_ns_.assign(max_msg_idx + 1, 0);
+        joint_rx_delivery_floor_ns_.assign(max_msg_idx + 1, std::numeric_limits<int64_t>::max());
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
@@ -462,6 +463,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_cmd_to_bus_latency_msg_.data.clear();
     joint_motor_reply_latency_msg_.data.clear();
     joint_rx_ns_.clear();
+    joint_rx_delivery_floor_ns_.clear();
     unfiltered_velocity_pub_.reset();
     unfiltered_velocity_msg_.data.clear();
     unfiltered_position_pub_.reset();
@@ -605,6 +607,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_cmd_to_bus_latency_msg_.data.clear();
         joint_motor_reply_latency_msg_.data.clear();
         joint_rx_ns_.clear();
+        joint_rx_delivery_floor_ns_.clear();
         unfiltered_velocity_msg_.data.clear();
         unfiltered_position_msg_.data.clear();
         set_all_motors_origin_here_srv_.reset();
@@ -1105,16 +1108,23 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         {
             joint_motor_reply_latency_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
-        // Kernel RX-delivery offset: software RX timestamp - hardware (card) RX timestamp, both from the same
-        // reply frame. The two clocks differ in epoch, so the value carries a constant offset; its VARIATION is
-        // the time the kernel took to deliver a reply the card already had (softirq/IRQ delay). A flat trace means
-        // late replies are late on the wire (or TX-side); spikes here mean the kernel delivered an on-time reply late.
+        // Kernel RX-delivery delay: (software RX timestamp - hardware (card) RX timestamp), both from the same
+        // reply frame. The raw difference carries a huge constant card-clock-vs-CLOCK_REALTIME offset, so we
+        // subtract the per-joint running minimum (the "delivered immediately" floor) and report the residual:
+        // ~0 when the kernel delivered the reply as fast as it ever does, spiking up by the extra delay when it
+        // didn't. Spikes here = kernel/IRQ delivery delay; a flat ~0 trace = the inflation is on the wire or TX-side.
         if (joint_states[i].communication_status == cubemars::ComStatus::SUCCESS &&
             joint_states[i].rx_timestamp_ns > 0 &&
             joint_states[i].rx_hw_timestamp_ns > 0)
         {
+            int64_t offset_ns = joint_states[i].rx_timestamp_ns - joint_states[i].rx_hw_timestamp_ns;
+            int64_t &floor_ns = joint_rx_delivery_floor_ns_[joint_params[i].msg_idx];
+            if (offset_ns < floor_ns)
+            {
+                floor_ns = offset_ns;
+            }
             joint_rx_delivery_msg_.data[joint_params[i].msg_idx] =
-                static_cast<float>((joint_states[i].rx_timestamp_ns - joint_states[i].rx_hw_timestamp_ns) / 1e3);
+                static_cast<float>((offset_ns - floor_ns) / 1e3);
         }
         else
         {

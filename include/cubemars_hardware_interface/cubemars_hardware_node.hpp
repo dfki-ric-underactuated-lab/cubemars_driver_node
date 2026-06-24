@@ -209,6 +209,10 @@ private:
     // Latest successful kernel RX timestamp (CLOCK_REALTIME ns) per msg_idx, used to
     // stamp the aggregated joint_state_msg_. Guarded by joint_state_msg_mutex_.
     std::vector<int64_t> joint_rx_ns_;
+    // Per-msg_idx running minimum of (software_rx - hardware_rx) ns. This is the "no kernel delivery
+    // delay" floor of the (otherwise huge, constant) card-clock-vs-CLOCK_REALTIME offset; subtracting
+    // it before the float cast keeps joint_rx_delivery_offsets_us near zero so its spikes are visible.
+    std::vector<int64_t> joint_rx_delivery_floor_ns_;
     // CLOCK_REALTIME ns the most recently stored joint command was received on the ROS subscriber.
     // Written by joint_cmd_msg_callback, read by can_cycle_callback (different callback groups).
     std::atomic<int64_t> cmd_rx_ns_{0};
