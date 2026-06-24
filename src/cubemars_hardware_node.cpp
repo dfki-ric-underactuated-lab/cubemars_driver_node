@@ -1124,15 +1124,15 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
     joint_state_msg_mutex_.unlock_shared();
 
-    // Warn if TX timestamping is on but no software TX timestamp came back for replied joints.
-    // The drained-entry count distinguishes "nothing delivered" from "delivered but unmatched".
-    if (tx_ts_missing > 0)
+    // DIAGNOSTIC (unconditional while TX timestamping is on): report the error-queue drain count.
+    //   drained == 0  -> kernel delivered no SW TX timestamps on the error queue
+    //   drained  > 0  -> entries arrive but can_id matching is failing
+    if (enable_tx_timestamping_)
     {
         unsigned int drained = can_interfaces_[can_interface_idx]->get_last_tx_errq_count();
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-            "Software TX timestamp missing for %u replied joint(s) on can interface %s (error-queue entries drained this cycle: %u). "
-            "If drained==0 the kernel delivered no TX timestamps (check CAN_RAW loopback / SO_TIMESTAMPING); if >0 the can_id match is failing.",
-            tx_ts_missing, can_interfaces_[can_interface_idx]->GetName().c_str(), drained);
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "[tx-ts diag] iface %s: error-queue entries drained this cycle = %u, send_timestamp missing on %u of %zu joints",
+            can_interfaces_[can_interface_idx]->GetName().c_str(), drained, tx_ts_missing, joint_states.size());
     }
 }
 
