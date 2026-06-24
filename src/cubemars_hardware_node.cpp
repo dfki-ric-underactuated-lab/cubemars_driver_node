@@ -1,4 +1,22 @@
 #include "cubemars_hardware_interface/cubemars_hardware_node.hpp"
+#include <linux/can/error.h>
+
+// Decode the error-class bits of a CAN error frame's can_id into a readable string.
+static std::string canErrorFrameToString(canid_t id)
+{
+    std::string s;
+    if (id & CAN_ERR_TX_TIMEOUT) s += "TX_TIMEOUT ";
+    if (id & CAN_ERR_LOSTARB)    s += "LOSTARB ";
+    if (id & CAN_ERR_CRTL)       s += "CTRL ";
+    if (id & CAN_ERR_PROT)       s += "PROT ";
+    if (id & CAN_ERR_TRX)        s += "TRX ";
+    if (id & CAN_ERR_ACK)        s += "ACK ";
+    if (id & CAN_ERR_BUSOFF)     s += "BUSOFF ";
+    if (id & CAN_ERR_BUSERROR)   s += "BUSERROR ";
+    if (id & CAN_ERR_RESTARTED)  s += "RESTARTED ";
+    if (s.empty()) s = "(unknown)";
+    return s;
+}
 
 CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("cubemars_hardware_node")
 {
@@ -20,6 +38,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("max_can_errors_before_motor_shutdown", 1);
     this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
     this->declare_parameter_if_undeclared("enable_tx_timestamping", true);
+    this->declare_parameter_if_undeclared("enable_can_error_frames", false);
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -31,6 +50,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         damping_on_motor_error_ =this->get_parameter("damping_on_motor_error").as_bool();
         max_can_errors_before_motor_shutdown_ = this->get_parameter("max_can_errors_before_motor_shutdown").as_int();
         enable_tx_timestamping_ = this->get_parameter("enable_tx_timestamping").as_bool();
+        enable_can_error_frames_ = this->get_parameter("enable_can_error_frames").as_bool();
 
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
@@ -260,7 +280,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 this->get_parameter("can_socket_timeout_sec").as_int(),
                 this->get_parameter("can_socket_timeout_usec").as_int(),
                 this->get_parameter("can_initial_connection_trials").as_int(),
-                enable_tx_timestamping_
+                enable_tx_timestamping_,
+                enable_can_error_frames_
             );
         }
 
@@ -886,6 +907,16 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             cleanup_requested_.store(true); // supervisor (executor thread) runs cleanup(); a comm thread must not join itself
             return;
         }
+    }
+
+    // Report CAN bus-error frames seen this cycle (only when enable_can_error_frames is set).
+    unsigned int can_error_frames = can_interfaces_[can_interface_idx]->get_last_error_count();
+    if (can_error_frames > 0)
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+            "CAN bus error on %s: %u error frame(s) this cycle [%s]",
+            can_interfaces_[can_interface_idx]->GetName().c_str(), can_error_frames,
+            canErrorFrameToString(can_interfaces_[can_interface_idx]->get_last_error_canid()).c_str());
     }
 
     unsigned int can_errors_in_this_cycle = 0;

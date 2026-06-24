@@ -2,10 +2,12 @@
 #include <iostream>
 #include <linux/errqueue.h>
 #include <linux/net_tstamp.h>
+#include <linux/can/error.h>
 
-cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping) : can_interface_(can_interface),
+cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping, bool enable_can_error_frames) : can_interface_(can_interface),
                                                                                                                                                                                                                       enable_loopback_(enable_loopback),
                                                                                                                                                                                                                       enable_tx_timestamping_(enable_tx_timestamping),
+                                                                                                                                                                                                                      enable_can_error_frames_(enable_can_error_frames),
                                                                                                                                                                                                                       joint_configs_(joint_configs),
                                                                                                                                                                                                                       socket_timeout_sec_(socket_timeout_sec),
                                                                                                                                                                                                                       socket_timeout_usec_(socket_timeout_usec),
@@ -111,6 +113,17 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
         {
             close(can_socket_fd_);
             throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING (TX) - {} ", std::string(strerror(errno))));
+        }
+    }
+    // Optionally deliver CAN bus-error frames (bus-off, ACK errors, controller problems, ...) on the
+    // RX queue. They arrive mixed with replies and are recognized/skipped in send_and_receive().
+    if (enable_can_error_frames_)
+    {
+        can_err_mask_t err_mask = CAN_ERR_MASK; // all error classes
+        if (setsockopt(can_socket_fd_, SOL_CAN_RAW, CAN_RAW_ERR_FILTER, &err_mask, sizeof(err_mask)) < 0)
+        {
+            close(can_socket_fd_);
+            throw cubemars::can_interface_error(std::format("Failed to set CAN_RAW_ERR_FILTER - {} ", std::string(strerror(errno))));
         }
     }
 
@@ -302,6 +315,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
     tx_fill_end_ns_ = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
     tx_fill_duration_ns_ = tx_fill_end_ns_ - tx_fill_start_ns;
     // Receive all commands
+    last_error_count_ = 0;
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
         if (!send_ok_[i])
@@ -310,9 +324,33 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         }
         recv_ok_[i] = false; // Will be set when reply is there
 
-        memset(&recv_frame_, 0, CAN_MTU);
         int64_t rx_ns = 0;
-        int nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns);
+        int nbytes;
+        // Read the next non-error frame. When CAN error frames are enabled they arrive here mixed
+        // with replies; record and skip them (read one more), bounded against an error storm. When
+        // disabled, CAN_ERR_FLAG is never set so this reads exactly one frame as before.
+        unsigned int err_skips = 0;
+        while (true)
+        {
+            memset(&recv_frame_, 0, CAN_MTU);
+            nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns);
+            if (nbytes < 0)
+            {
+                break; // timeout / read error
+            }
+            if (recv_frame_.can_id & CAN_ERR_FLAG)
+            {
+                last_error_canid_ = recv_frame_.can_id;
+                last_error_count_++;
+                if (++err_skips >= 16)
+                {
+                    nbytes = -1; // storm guard: stop reading and treat this reply as missing
+                    break;
+                }
+                continue; // read another frame for the actual reply
+            }
+            break; // a real (non-error) frame
+        }
         if (nbytes < 0)
         {
             states[i].communication_status = ComStatus::CAN_READ_FAILED;

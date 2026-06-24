@@ -123,6 +123,7 @@ private:
     bool damping_on_motor_error_;
     unsigned int max_can_errors_before_motor_shutdown_;
     bool enable_tx_timestamping_; // software TX timestamps + the cmd_to_bus / motor_reply latency topics
+    bool enable_can_error_frames_; // deliver + log CAN bus-error frames (bus-off, ACK errors, ...)
 
     bool msg_received_;
 

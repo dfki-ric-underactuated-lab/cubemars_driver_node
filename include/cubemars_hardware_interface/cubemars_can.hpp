@@ -46,7 +46,7 @@ namespace cubemars
     class CubemarsCan
     {
     public:
-        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping = true);
+        CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping = true, bool enable_can_error_frames = false);
         void start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable);
         void end_motor_control_mode(unsigned int joint_id);
         void start_motor_control_mode(bool set_zero_postion_on_enable);
@@ -69,6 +69,8 @@ namespace cubemars
         int64_t get_rx_duration_ns() const { return rx_duration_ns_; }           // time to receive all replies after the TX buffer was filled
         int64_t get_tx_fill_end_ns() const { return tx_fill_end_ns_; }           // timestamp the TX buffer finished being filled (reference for per-motor reply timing)
         unsigned int get_last_tx_errq_count() const { return last_tx_errq_count_; } // error-queue entries drained in the last collect_tx_timestamps()
+        unsigned int get_last_error_count() const { return last_error_count_; }      // CAN bus-error frames seen in the last send_and_receive()
+        canid_t get_last_error_canid() const { return last_error_canid_; }           // can_id (error class bits) of the most recent error frame
 
         virtual ~CubemarsCan();
 
@@ -76,6 +78,7 @@ namespace cubemars
         std::string can_interface_;
         int enable_loopback_;
         bool enable_tx_timestamping_;
+        bool enable_can_error_frames_;
         std::vector<joint_config_t> joint_configs_;
         long socket_timeout_sec_;
         long socket_timeout_usec_;
@@ -86,6 +89,8 @@ namespace cubemars
         int64_t rx_duration_ns_ = 0;
         int64_t tx_fill_end_ns_ = 0;
         unsigned int last_tx_errq_count_ = 0;
+        unsigned int last_error_count_ = 0;
+        canid_t last_error_canid_ = 0;
         int can_socket_fd_;
         can_frame send_frame_;
         can_frame recv_frame_;
