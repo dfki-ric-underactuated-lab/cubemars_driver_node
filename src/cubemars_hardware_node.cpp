@@ -69,6 +69,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_reply_after_tx_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_reply_after_tx_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_state_age_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_state_ages_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_rx_delivery_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_rx_delivery_offsets_us", QOS_BEST_EFFORT_NO_DEPTH);
+        joint_rx_hw_timestamp_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_rx_hw_timestamps_us", QOS_BEST_EFFORT_NO_DEPTH);
         if (enable_tx_timestamping_)
         {
             // These two depend on the software TX timestamp; only published when it's enabled.
@@ -187,12 +188,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_temp_msg_.data.resize(max_msg_idx + 1, 0.0);
         joint_state_age_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_rx_delivery_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        joint_rx_hw_timestamp_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_reply_after_tx_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_cmd_to_bus_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_motor_reply_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_enqueue_to_wire_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_rx_ns_.assign(max_msg_idx + 1, 0);
         joint_rx_delivery_floor_ns_.assign(max_msg_idx + 1, std::numeric_limits<int64_t>::max());
+        joint_rx_hw_base_ns_.assign(max_msg_idx + 1, 0);
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
@@ -448,6 +451,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_enqueue_to_wire_pub_.reset();
     joint_state_age_pub_.reset();
     joint_rx_delivery_pub_.reset();
+    joint_rx_hw_timestamp_pub_.reset();
     joint_cmd_to_bus_latency_pub_.reset();
     joint_motor_reply_latency_pub_.reset();
     controller_latency_pub_.reset();
@@ -460,10 +464,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_enqueue_to_wire_msg_.data.clear();
     joint_state_age_msg_.data.clear();
     joint_rx_delivery_msg_.data.clear();
+    joint_rx_hw_timestamp_msg_.data.clear();
     joint_cmd_to_bus_latency_msg_.data.clear();
     joint_motor_reply_latency_msg_.data.clear();
     joint_rx_ns_.clear();
     joint_rx_delivery_floor_ns_.clear();
+    joint_rx_hw_base_ns_.clear();
     unfiltered_velocity_pub_.reset();
     unfiltered_velocity_msg_.data.clear();
     unfiltered_position_pub_.reset();
@@ -573,6 +579,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_enqueue_to_wire_pub_.reset();
         joint_state_age_pub_.reset();
         joint_rx_delivery_pub_.reset();
+        joint_rx_hw_timestamp_pub_.reset();
         joint_cmd_to_bus_latency_pub_.reset();
         joint_motor_reply_latency_pub_.reset();
         controller_latency_pub_.reset();
@@ -604,10 +611,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_enqueue_to_wire_msg_.data.clear();
         joint_state_age_msg_.data.clear();
         joint_rx_delivery_msg_.data.clear();
+        joint_rx_hw_timestamp_msg_.data.clear();
         joint_cmd_to_bus_latency_msg_.data.clear();
         joint_motor_reply_latency_msg_.data.clear();
         joint_rx_ns_.clear();
         joint_rx_delivery_floor_ns_.clear();
+        joint_rx_hw_base_ns_.clear();
         unfiltered_velocity_msg_.data.clear();
         unfiltered_position_msg_.data.clear();
         set_all_motors_origin_here_srv_.reset();
@@ -702,6 +711,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     joint_cmd_to_bus_latency_msg_to_pub_ = joint_cmd_to_bus_latency_msg_;
     joint_motor_reply_latency_msg_to_pub_ = joint_motor_reply_latency_msg_;
     joint_rx_delivery_msg_to_pub_ = joint_rx_delivery_msg_;
+    joint_rx_hw_timestamp_msg_to_pub_ = joint_rx_hw_timestamp_msg_;
     unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
     unfiltered_position_msg_to_pub_ = unfiltered_position_msg_;
     // Stamp with the oldest successful reply currently in the message: a conservative
@@ -739,6 +749,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     joint_reply_after_tx_pub_->publish(joint_reply_after_tx_msg_to_pub_);
     joint_state_age_pub_->publish(joint_state_age_msg_);
     joint_rx_delivery_pub_->publish(joint_rx_delivery_msg_to_pub_);
+    joint_rx_hw_timestamp_pub_->publish(joint_rx_hw_timestamp_msg_to_pub_);
     if (joint_cmd_to_bus_latency_pub_) // only created when TX timestamping is enabled
     {
         joint_cmd_to_bus_latency_pub_->publish(joint_cmd_to_bus_latency_msg_to_pub_);
@@ -1129,6 +1140,25 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         else
         {
             joint_rx_delivery_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+        }
+        // Card hardware-clock RX timestamp, baseline-subtracted per joint (us since this joint's first reply)
+        // so the otherwise-huge free-running card clock fits float32. Diff consecutive values for the card's
+        // own RX inter-arrival timing (steady here while the software RX jitters = the card is fine, the
+        // kernel/driver delivers late).
+        if (joint_states[i].communication_status == cubemars::ComStatus::SUCCESS &&
+            joint_states[i].rx_hw_timestamp_ns > 0)
+        {
+            int64_t &base_ns = joint_rx_hw_base_ns_[joint_params[i].msg_idx];
+            if (base_ns == 0)
+            {
+                base_ns = joint_states[i].rx_hw_timestamp_ns;
+            }
+            joint_rx_hw_timestamp_msg_.data[joint_params[i].msg_idx] =
+                static_cast<float>((joint_states[i].rx_hw_timestamp_ns - base_ns) / 1e3);
+        }
+        else
+        {
+            joint_rx_hw_timestamp_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
         // Latency from ROS command receipt to this joint's frame going on the wire (software TX timestamp).
         if (joint_states[i].send_timestamp_ns > 0 && cmd_rx_ns > 0)

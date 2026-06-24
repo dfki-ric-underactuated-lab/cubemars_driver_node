@@ -109,6 +109,9 @@ private:
     // absolute value is a constant card-clock-vs-CLOCK_REALTIME offset; its VARIATION/spikes are the time the
     // kernel took to deliver a reply the card already had (softirq/IRQ delay) vs. a genuinely late reply.
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_delivery_pub_;
+    // Per-joint card hardware-clock RX timestamp, baseline-subtracted (us since this joint's first reply,
+    // so it fits float32). Diff consecutive values for the card's RX inter-arrival timing.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_rx_hw_timestamp_pub_;
     // Per-joint TX-path latency: command TX timestamp - write() enqueue timestamp (time from buffer to wire), in us.
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_enqueue_to_wire_pub_;
     // Per-CAN-interface: cycle wall time minus send and receive (the prologue + filters + write-back + diagnostics), in us.
@@ -151,6 +154,7 @@ private:
     std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_;
     std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_;
     std_msgs::msg::Float32MultiArray joint_rx_delivery_msg_;
+    std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
@@ -165,6 +169,7 @@ private:
     std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_motor_reply_latency_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_rx_delivery_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
     std::shared_mutex joint_state_msg_mutex_;
@@ -213,6 +218,9 @@ private:
     // delay" floor of the (otherwise huge, constant) card-clock-vs-CLOCK_REALTIME offset; subtracting
     // it before the float cast keeps joint_rx_delivery_offsets_us near zero so its spikes are visible.
     std::vector<int64_t> joint_rx_delivery_floor_ns_;
+    // Per-msg_idx first hardware-clock RX timestamp (ns), used as the baseline for joint_rx_hw_timestamps_us
+    // (0 = not yet set).
+    std::vector<int64_t> joint_rx_hw_base_ns_;
     // CLOCK_REALTIME ns the most recently stored joint command was received on the ROS subscriber.
     // Written by joint_cmd_msg_callback, read by can_cycle_callback (different callback groups).
     std::atomic<int64_t> cmd_rx_ns_{0};
