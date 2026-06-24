@@ -65,6 +65,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_tx_fill_duration_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_tx_fill_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
         can_rx_duration_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_rx_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
         can_processing_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_processing_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
+        can_intercycle_gap_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_intercycle_gaps_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_reply_after_tx_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_reply_after_tx_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_state_age_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_state_ages_us", QOS_BEST_EFFORT_NO_DEPTH);
         if (enable_tx_timestamping_)
@@ -157,6 +158,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         num_can_errors_per_interfaces_.resize(num_can_interfaces, 0);
         can_interfaces_.resize(num_can_interfaces);
         last_can_cycle_times_.resize(num_can_interfaces, this->get_clock()->now());
+        last_cycle_end_ns_per_can_interface_.resize(num_can_interfaces, 0);
         // One comm thread object per interface (threads spawned later, after motors are enabled).
         comm_threads_.resize(num_can_interfaces);
         for (unsigned int i = 0; i < num_can_interfaces; i++)
@@ -167,6 +169,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_tx_fill_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
         can_rx_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
         can_processing_msg_.data.resize(num_can_interfaces, std::nanf(""));
+        can_intercycle_gap_msg_.data.resize(num_can_interfaces, std::nanf(""));
 
         // Prepare messages
         // Initial command: all zero (free / no torque) until the first real command arrives.
@@ -437,6 +440,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     can_tx_fill_duration_pub_.reset();
     can_rx_duration_pub_.reset();
     can_processing_pub_.reset();
+    can_intercycle_gap_pub_.reset();
     joint_reply_after_tx_pub_.reset();
     joint_enqueue_to_wire_pub_.reset();
     joint_state_age_pub_.reset();
@@ -446,6 +450,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     can_tx_fill_duration_msg_.data.clear();
     can_rx_duration_msg_.data.clear();
     can_processing_msg_.data.clear();
+    can_intercycle_gap_msg_.data.clear();
+    last_cycle_end_ns_per_can_interface_.clear();
     joint_reply_after_tx_msg_.data.clear();
     joint_enqueue_to_wire_msg_.data.clear();
     joint_state_age_msg_.data.clear();
@@ -556,6 +562,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         can_tx_fill_duration_pub_.reset();
         can_rx_duration_pub_.reset();
         can_processing_pub_.reset();
+        can_intercycle_gap_pub_.reset();
         joint_reply_after_tx_pub_.reset();
         joint_enqueue_to_wire_pub_.reset();
         joint_state_age_pub_.reset();
@@ -584,6 +591,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         can_tx_fill_duration_msg_.data.clear();
         can_rx_duration_msg_.data.clear();
         can_processing_msg_.data.clear();
+        can_intercycle_gap_msg_.data.clear();
+        last_cycle_end_ns_per_can_interface_.clear();
         joint_reply_after_tx_msg_.data.clear();
         joint_enqueue_to_wire_msg_.data.clear();
         joint_state_age_msg_.data.clear();
@@ -678,6 +687,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     can_tx_fill_duration_msg_to_pub_ = can_tx_fill_duration_msg_;
     can_rx_duration_msg_to_pub_ = can_rx_duration_msg_;
     can_processing_msg_to_pub_ = can_processing_msg_;
+    can_intercycle_gap_msg_to_pub_ = can_intercycle_gap_msg_;
     joint_reply_after_tx_msg_to_pub_ = joint_reply_after_tx_msg_;
     joint_enqueue_to_wire_msg_to_pub_ = joint_enqueue_to_wire_msg_;
     joint_cmd_to_bus_latency_msg_to_pub_ = joint_cmd_to_bus_latency_msg_;
@@ -715,6 +725,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     can_tx_fill_duration_pub_->publish(can_tx_fill_duration_msg_to_pub_);
     can_rx_duration_pub_->publish(can_rx_duration_msg_to_pub_);
     can_processing_pub_->publish(can_processing_msg_to_pub_);
+    can_intercycle_gap_pub_->publish(can_intercycle_gap_msg_to_pub_);
     joint_reply_after_tx_pub_->publish(joint_reply_after_tx_msg_to_pub_);
     joint_state_age_pub_->publish(joint_state_age_msg_);
     if (joint_cmd_to_bus_latency_pub_) // only created when TX timestamping is enabled
@@ -1152,8 +1163,15 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     // Processing ("plumbing"): whole-cycle wall time minus the send and receive phases.
     struct timespec cycle_end_ts;
     clock_gettime(CLOCK_MONOTONIC, &cycle_end_ts);
-    int64_t cycle_total_ns = (static_cast<int64_t>(cycle_end_ts.tv_sec) * 1000000000LL + cycle_end_ts.tv_nsec) - cycle_entry_ns;
+    int64_t cycle_end_ns = static_cast<int64_t>(cycle_end_ts.tv_sec) * 1000000000LL + cycle_end_ts.tv_nsec;
+    int64_t cycle_total_ns = cycle_end_ns - cycle_entry_ns;
     can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
+    // Inter-cycle gap: this cycle's entry minus the previous cycle's end = loop/scheduling overhead
+    // between consecutive can_cycle_callback runs (should be ~0; spikes = the comm thread was descheduled).
+    int64_t prev_end_ns = last_cycle_end_ns_per_can_interface_[can_interface_idx];
+    can_intercycle_gap_msg_.data[can_interface_idx] =
+        (prev_end_ns > 0) ? static_cast<float>((cycle_entry_ns - prev_end_ns) / 1e3) : std::nanf("");
+    last_cycle_end_ns_per_can_interface_[can_interface_idx] = cycle_end_ns;
     joint_state_msg_mutex_.unlock_shared();
 
     // Health check: warn (throttled) only if TX timestamping is on but a replied joint got no

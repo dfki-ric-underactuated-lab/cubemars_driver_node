@@ -109,6 +109,8 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr joint_enqueue_to_wire_pub_;
     // Per-CAN-interface: cycle wall time minus send and receive (the prologue + filters + write-back + diagnostics), in us.
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_processing_pub_;
+    // Per-CAN-interface: gap from the end of one can_cycle_callback to the start of the next (loop/scheduling overhead), in us.
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_intercycle_gap_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
@@ -138,6 +140,7 @@ private:
     std_msgs::msg::Float32MultiArray can_tx_fill_duration_msg_;
     std_msgs::msg::Float32MultiArray can_rx_duration_msg_;
     std_msgs::msg::Float32MultiArray can_processing_msg_;
+    std_msgs::msg::Float32MultiArray can_intercycle_gap_msg_;
     std_msgs::msg::Float32MultiArray joint_reply_after_tx_msg_;
     std_msgs::msg::Float32MultiArray joint_enqueue_to_wire_msg_;
     std_msgs::msg::Float32MultiArray joint_state_age_msg_;
@@ -151,6 +154,7 @@ private:
     std_msgs::msg::Float32MultiArray can_tx_fill_duration_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_rx_duration_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_processing_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray can_intercycle_gap_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_reply_after_tx_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_enqueue_to_wire_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_cmd_to_bus_latency_msg_to_pub_;
@@ -178,6 +182,7 @@ private:
     std::vector<unsigned int> num_can_errors_per_interfaces_;
     std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
+    std::vector<int64_t> last_cycle_end_ns_per_can_interface_; // CLOCK_MONOTONIC end of the previous can_cycle_callback, for the inter-cycle gap
 
     // One dedicated thread per CAN interface running the send/receive cycle back-to-back,
     // instead of a ROS timer dispatched by the executor (removes per-cycle dispatch latency).
