@@ -44,6 +44,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_interface_frequency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_cycle_frequencies", QOS_BEST_EFFORT_NO_DEPTH);
         can_tx_fill_duration_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_tx_fill_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
         can_rx_duration_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_rx_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
+        can_processing_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("can_processing_durations_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_reply_after_tx_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_reply_after_tx_us", QOS_BEST_EFFORT_NO_DEPTH);
         joint_state_age_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_state_ages_us", QOS_BEST_EFFORT_NO_DEPTH);
         if (enable_tx_timestamping_)
@@ -51,6 +52,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             // These two depend on the software TX timestamp; only published when it's enabled.
             joint_cmd_to_bus_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_cmd_to_bus_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
             joint_motor_reply_latency_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_motor_reply_latencies_us", QOS_BEST_EFFORT_NO_DEPTH);
+            joint_enqueue_to_wire_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_enqueue_to_wire_us", QOS_BEST_EFFORT_NO_DEPTH);
         }
         unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
@@ -144,6 +146,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_interface_frequency_msg_.data.resize(num_can_interfaces, 0.0);
         can_tx_fill_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
         can_rx_duration_msg_.data.resize(num_can_interfaces, std::nanf(""));
+        can_processing_msg_.data.resize(num_can_interfaces, std::nanf(""));
 
         // Prepare messages
         // Initial command: all zero (free / no torque) until the first real command arrives.
@@ -162,6 +165,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_reply_after_tx_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_cmd_to_bus_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_motor_reply_latency_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        joint_enqueue_to_wire_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         joint_rx_ns_.assign(max_msg_idx + 1, 0);
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
@@ -214,7 +218,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             unsigned int pos_median_filter_size = static_cast<unsigned int>(pos_median_filter_size_raw);
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
-            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0});
+            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0, 0});
             joint_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_min").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_max").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double(),
@@ -411,14 +415,18 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     can_interface_frequency_pub_.reset();
     can_tx_fill_duration_pub_.reset();
     can_rx_duration_pub_.reset();
+    can_processing_pub_.reset();
     joint_reply_after_tx_pub_.reset();
+    joint_enqueue_to_wire_pub_.reset();
     joint_state_age_pub_.reset();
     joint_cmd_to_bus_latency_pub_.reset();
     joint_motor_reply_latency_pub_.reset();
     controller_latency_pub_.reset();
     can_tx_fill_duration_msg_.data.clear();
     can_rx_duration_msg_.data.clear();
+    can_processing_msg_.data.clear();
     joint_reply_after_tx_msg_.data.clear();
+    joint_enqueue_to_wire_msg_.data.clear();
     joint_state_age_msg_.data.clear();
     joint_cmd_to_bus_latency_msg_.data.clear();
     joint_motor_reply_latency_msg_.data.clear();
@@ -526,7 +534,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         can_interface_frequency_pub_.reset();
         can_tx_fill_duration_pub_.reset();
         can_rx_duration_pub_.reset();
+        can_processing_pub_.reset();
         joint_reply_after_tx_pub_.reset();
+        joint_enqueue_to_wire_pub_.reset();
         joint_state_age_pub_.reset();
         joint_cmd_to_bus_latency_pub_.reset();
         joint_motor_reply_latency_pub_.reset();
@@ -552,7 +562,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_name_to_can_iface_and_idx_.clear();
         can_tx_fill_duration_msg_.data.clear();
         can_rx_duration_msg_.data.clear();
+        can_processing_msg_.data.clear();
         joint_reply_after_tx_msg_.data.clear();
+        joint_enqueue_to_wire_msg_.data.clear();
         joint_state_age_msg_.data.clear();
         joint_cmd_to_bus_latency_msg_.data.clear();
         joint_motor_reply_latency_msg_.data.clear();
@@ -644,7 +656,9 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     can_interface_frequency_msg_to_pub_ = can_interface_frequency_msg_;
     can_tx_fill_duration_msg_to_pub_ = can_tx_fill_duration_msg_;
     can_rx_duration_msg_to_pub_ = can_rx_duration_msg_;
+    can_processing_msg_to_pub_ = can_processing_msg_;
     joint_reply_after_tx_msg_to_pub_ = joint_reply_after_tx_msg_;
+    joint_enqueue_to_wire_msg_to_pub_ = joint_enqueue_to_wire_msg_;
     joint_cmd_to_bus_latency_msg_to_pub_ = joint_cmd_to_bus_latency_msg_;
     joint_motor_reply_latency_msg_to_pub_ = joint_motor_reply_latency_msg_;
     unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
@@ -679,12 +693,14 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     can_interface_frequency_pub_->publish(can_interface_frequency_msg_to_pub_);
     can_tx_fill_duration_pub_->publish(can_tx_fill_duration_msg_to_pub_);
     can_rx_duration_pub_->publish(can_rx_duration_msg_to_pub_);
+    can_processing_pub_->publish(can_processing_msg_to_pub_);
     joint_reply_after_tx_pub_->publish(joint_reply_after_tx_msg_to_pub_);
     joint_state_age_pub_->publish(joint_state_age_msg_);
     if (joint_cmd_to_bus_latency_pub_) // only created when TX timestamping is enabled
     {
         joint_cmd_to_bus_latency_pub_->publish(joint_cmd_to_bus_latency_msg_to_pub_);
         joint_motor_reply_latency_pub_->publish(joint_motor_reply_latency_msg_to_pub_);
+        joint_enqueue_to_wire_pub_->publish(joint_enqueue_to_wire_msg_to_pub_);
     }
     unfiltered_velocity_pub_->publish(unfiltered_velocity_msg_to_pub_);
     unfiltered_position_pub_->publish(unfiltered_position_msg_to_pub_);
@@ -775,6 +791,12 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     {
         return;
     }
+
+    // Cycle start (CLOCK_MONOTONIC) to measure total cycle time; the non-send/receive remainder
+    // (prologue + filters + write-back + diagnostics + any lock waits) is the "processing" cost.
+    struct timespec cycle_entry_ts;
+    clock_gettime(CLOCK_MONOTONIC, &cycle_entry_ts);
+    int64_t cycle_entry_ns = static_cast<int64_t>(cycle_entry_ts.tv_sec) * 1000000000LL + cycle_entry_ts.tv_nsec;
 
     // Block runtime parameter updates from interleaving with this cycle's reads/writes of joint params and filters.
     std::shared_lock<WritePreferringSharedMutex> params_lock(joint_params_mutex_);
@@ -1047,6 +1069,18 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         {
             joint_reply_after_tx_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
+        // TX-path latency: from this frame being written into the TX buffer to it actually going on
+        // the wire (software TX timestamp). Needs both timestamps (TX timestamping enabled).
+        if (joint_states[i].send_timestamp_ns > 0 && joint_states[i].enqueue_timestamp_ns > 0 &&
+            joint_states[i].send_timestamp_ns >= joint_states[i].enqueue_timestamp_ns)
+        {
+            joint_enqueue_to_wire_msg_.data[joint_params[i].msg_idx] =
+                static_cast<float>((joint_states[i].send_timestamp_ns - joint_states[i].enqueue_timestamp_ns) / 1e3);
+        }
+        else
+        {
+            joint_enqueue_to_wire_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+        }
     }
     // Check limits
     if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
@@ -1073,8 +1107,15 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     
 
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
-    can_tx_fill_duration_msg_.data[can_interface_idx] = static_cast<float>(can_interfaces_[can_interface_idx]->get_tx_fill_duration_ns() / 1e3);
-    can_rx_duration_msg_.data[can_interface_idx] = static_cast<float>(can_interfaces_[can_interface_idx]->get_rx_duration_ns() / 1e3);
+    int64_t tx_fill_ns = can_interfaces_[can_interface_idx]->get_tx_fill_duration_ns();
+    int64_t rx_dur_ns = can_interfaces_[can_interface_idx]->get_rx_duration_ns();
+    can_tx_fill_duration_msg_.data[can_interface_idx] = static_cast<float>(tx_fill_ns / 1e3);
+    can_rx_duration_msg_.data[can_interface_idx] = static_cast<float>(rx_dur_ns / 1e3);
+    // Processing ("plumbing"): whole-cycle wall time minus the send and receive phases.
+    struct timespec cycle_end_ts;
+    clock_gettime(CLOCK_MONOTONIC, &cycle_end_ts);
+    int64_t cycle_total_ns = (static_cast<int64_t>(cycle_end_ts.tv_sec) * 1000000000LL + cycle_end_ts.tv_nsec) - cycle_entry_ns;
+    can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
     joint_state_msg_mutex_.unlock_shared();
 }
 

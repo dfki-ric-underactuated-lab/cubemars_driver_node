@@ -280,6 +280,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
 
         states[i].send_timestamp_ns = 0; // Filled from the error queue in collect_tx_timestamps() once TX completes
         states[i].dequeue_timestamp_ns = 0; // Filled in the receive loop below when the reply is read
+        states[i].enqueue_timestamp_ns = 0;
         if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
         {
             states[i].com_errno = errno;
@@ -288,6 +289,10 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         }
         else
         {
+            // Userspace moment this frame finished being written into the TX buffer.
+            struct timespec enq_ts;
+            clock_gettime(CLOCK_REALTIME, &enq_ts);
+            states[i].enqueue_timestamp_ns = static_cast<int64_t>(enq_ts.tv_sec) * 1000000000LL + enq_ts.tv_nsec;
             send_ok_[i] = true;
             states[i].communication_status = ComStatus::CAN_NO_RESPONSE; // Will be updated when reply is there
         }
