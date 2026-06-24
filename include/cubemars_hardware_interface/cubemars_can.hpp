@@ -96,10 +96,13 @@ namespace cubemars
         can_frame recv_frame_;
 
         /**Can helper functions**/
-        // recvmsg-based receive that pulls the SO_TIMESTAMPNS ancillary data.
+        // recvmsg-based receive that pulls the RX timestamp ancillary data.
         // Returns the same value as recvmsg() (bytes received, or -1 on error).
-        // rx_timestamp_ns is set to the kernel RX timestamp in CLOCK_REALTIME ns, or 0 if unavailable.
-        int recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns);
+        // rx_timestamp_ns is set to the kernel software RX timestamp (SO_TIMESTAMPNS) in CLOCK_REALTIME ns,
+        // or 0 if unavailable. rx_hw_timestamp_ns is set to the card's hardware RX timestamp
+        // (SCM_TIMESTAMPING ts[2], raw free-running card clock), or 0 if unavailable. Comparing the two
+        // tells a reply that was late on the wire from one the kernel delivered late.
+        int recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns, int64_t &rx_hw_timestamp_ns);
 
         // Drains the socket error queue (MSG_ERRQUEUE) of software TX timestamps and assigns each
         // to the matching joint's send_timestamp_ns (matched by the echoed frame's can_id). Called

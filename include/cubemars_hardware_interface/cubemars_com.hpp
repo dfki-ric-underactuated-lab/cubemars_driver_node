@@ -154,6 +154,7 @@ namespace cubemars
         int64_t send_timestamp_ns;     // CLOCK_REALTIME nanoseconds of command frame TX completion (kernel software TX timestamp), 0 if unavailable
         int64_t dequeue_timestamp_ns;  // CLOCK_REALTIME nanoseconds the reply was read into node space (userspace, after recvmsg), 0 if no reply
         int64_t enqueue_timestamp_ns;  // CLOCK_REALTIME nanoseconds the command frame was written into the TX buffer (userspace, after ::write), 0 if write failed
+        int64_t rx_hw_timestamp_ns;    // raw NIC/card hardware-clock nanoseconds of reply frame arrival (free-running clock, NOT CLOCK_REALTIME), 0 if unavailable
     };
 
     static const std::map<std::string, joint_config_t> joint_config_per_motor_type ={

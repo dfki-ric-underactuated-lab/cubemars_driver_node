@@ -103,17 +103,21 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
         close(can_socket_fd_);
         throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
     }
-    // Optionally enable software TX timestamps (CLOCK_REALTIME ns of TX completion), reported on
-    // the error queue. Only TX flags are set, so the SO_TIMESTAMPNS RX path above is untouched.
-    // When disabled, no error-queue entries are generated, so the per-cycle drain is skipped too.
+    // Enable SO_TIMESTAMPING. The hardware RX timestamp (raw card clock, reported as ts[2]) is always
+    // requested: it captures when the card actually received a reply off the wire, so comparing it to
+    // the software RX timestamp (SO_TIMESTAMPNS, above) separates a reply that was late on the wire
+    // from one the kernel delivered late. Software TX timestamps (CLOCK_REALTIME ns of TX completion,
+    // reported on the error queue) are added only when requested; when off, no error-queue entries are
+    // generated so the per-cycle drain is skipped too. These flags coexist with SO_TIMESTAMPNS.
+    int ts_flags = SOF_TIMESTAMPING_RX_HARDWARE | SOF_TIMESTAMPING_RAW_HARDWARE;
     if (enable_tx_timestamping_)
     {
-        int tx_ts_flags = SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
-        if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &tx_ts_flags, sizeof(tx_ts_flags)) < 0)
-        {
-            close(can_socket_fd_);
-            throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING (TX) - {} ", std::string(strerror(errno))));
-        }
+        ts_flags |= SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
+    }
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &ts_flags, sizeof(ts_flags)) < 0)
+    {
+        close(can_socket_fd_);
+        throw cubemars::can_interface_error(std::format("Failed to enable SO_TIMESTAMPING - {} ", std::string(strerror(errno))));
     }
     // Optionally deliver CAN bus-error frames (bus-off, ACK errors, controller problems, ...) on the
     // RX queue. They arrive mixed with replies and are recognized/skipped in send_and_receive().
@@ -132,12 +136,13 @@ cubemars::CubemarsCan::CubemarsCan(const std::string &can_interface, const int &
     send_frame_.len = CAN_MAX_DLEN;
 }
 
-int cubemars::CubemarsCan::recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns)
+int cubemars::CubemarsCan::recv_frame_with_timestamp(struct can_frame &frame, int64_t &rx_timestamp_ns, int64_t &rx_hw_timestamp_ns)
 {
     struct iovec iov;
     iov.iov_base = &frame;
     iov.iov_len = sizeof(frame);
-    char ctrl[CMSG_SPACE(sizeof(struct timespec))];
+    // Room for both the SO_TIMESTAMPNS cmsg (1 timespec) and the SCM_TIMESTAMPING cmsg (3 timespecs).
+    char ctrl[CMSG_SPACE(sizeof(struct timespec)) + CMSG_SPACE(3 * sizeof(struct timespec))];
     struct msghdr msg;
     memset(&msg, 0, sizeof(msg));
     msg.msg_iov = &iov;
@@ -147,6 +152,7 @@ int cubemars::CubemarsCan::recv_frame_with_timestamp(struct can_frame &frame, in
 
     int nbytes = ::recvmsg(can_socket_fd_, &msg, 0);
     rx_timestamp_ns = 0;
+    rx_hw_timestamp_ns = 0;
     if (nbytes < 0)
     {
         return nbytes;
@@ -158,7 +164,12 @@ int cubemars::CubemarsCan::recv_frame_with_timestamp(struct can_frame &frame, in
             struct timespec ts;
             memcpy(&ts, CMSG_DATA(c), sizeof(ts));
             rx_timestamp_ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
-            break;
+        }
+        else if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMPING)
+        {
+            struct timespec ts[3]; // ts[0]=software, ts[1]=legacy(unused), ts[2]=raw hardware
+            memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+            rx_hw_timestamp_ns = static_cast<int64_t>(ts[2].tv_sec) * 1000000000LL + ts[2].tv_nsec;
         }
     }
     return nbytes;
@@ -325,6 +336,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         recv_ok_[i] = false; // Will be set when reply is there
 
         int64_t rx_ns = 0;
+        int64_t rx_hw_ns = 0;
         int nbytes;
         // Read the next non-error frame. When CAN error frames are enabled they arrive here mixed
         // with replies; record and skip them (read one more), bounded against an error storm. When
@@ -333,7 +345,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
         while (true)
         {
             memset(&recv_frame_, 0, CAN_MTU);
-            nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns);
+            nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns, rx_hw_ns);
             if (nbytes < 0)
             {
                 break; // timeout / read error
@@ -383,6 +395,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
             states[joint_index].rx_timestamp_ns = rx_ns;
+            states[joint_index].rx_hw_timestamp_ns = rx_hw_ns;
             states[joint_index].dequeue_timestamp_ns = deq_ns;
 
             int16_t p_int = recv_frame_.data[0] << 8 | recv_frame_.data[1];
@@ -414,6 +427,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
             joint_index = it - joint_configs_.begin();
             recv_ok_[joint_index] = true;
             states[joint_index].rx_timestamp_ns = rx_ns;
+            states[joint_index].rx_hw_timestamp_ns = rx_hw_ns;
             states[joint_index].dequeue_timestamp_ns = deq_ns;
 
             uint16_t p_int = (recv_frame_.data[1] << 8) | recv_frame_.data[2];         // Motor Position Data
