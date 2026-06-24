@@ -1124,15 +1124,18 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
     joint_state_msg_mutex_.unlock_shared();
 
-    // DIAGNOSTIC (unconditional while TX timestamping is on): report the error-queue drain count.
-    //   drained == 0  -> kernel delivered no SW TX timestamps on the error queue
-    //   drained  > 0  -> entries arrive but can_id matching is failing
-    if (enable_tx_timestamping_)
+    // DIAGNOSTIC (unconditional while TX timestamping is on): dump joint 0's raw timestamps so we
+    // can see why the metrics are NaN (zero? bad ordering? different clock epoch?).
+    if (enable_tx_timestamping_ && !joint_states.empty())
     {
         unsigned int drained = can_interfaces_[can_interface_idx]->get_last_tx_errq_count();
+        const auto &j = joint_states[0];
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "[tx-ts diag] iface %s: error-queue entries drained this cycle = %u, send_timestamp missing on %u of %zu joints",
-            can_interfaces_[can_interface_idx]->GetName().c_str(), drained, tx_ts_missing, joint_states.size());
+            "[tx-ts diag] iface %s drained=%u | j0 status=%d enqueue=%ld send=%ld rx=%ld | send-enqueue=%ld rx-send=%ld",
+            can_interfaces_[can_interface_idx]->GetName().c_str(), drained,
+            static_cast<int>(j.communication_status),
+            (long)j.enqueue_timestamp_ns, (long)j.send_timestamp_ns, (long)j.rx_timestamp_ns,
+            (long)(j.send_timestamp_ns - j.enqueue_timestamp_ns), (long)(j.rx_timestamp_ns - j.send_timestamp_ns));
     }
 }
 
