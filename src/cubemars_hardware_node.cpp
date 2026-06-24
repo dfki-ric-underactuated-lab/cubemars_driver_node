@@ -1075,10 +1075,11 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         {
             joint_reply_after_tx_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
-        // TX-path latency: from this frame being written into the TX buffer to it actually going on
-        // the wire (software TX timestamp). Needs both timestamps (TX timestamping enabled).
-        if (joint_states[i].send_timestamp_ns > 0 && joint_states[i].enqueue_timestamp_ns > 0 &&
-            joint_states[i].send_timestamp_ns >= joint_states[i].enqueue_timestamp_ns)
+        // TX-path latency: software TX timestamp minus our post-write enqueue stamp. On drivers that
+        // transmit synchronously inside write(), the TX stamp lands just *before* the enqueue stamp,
+        // so this is normally slightly negative (~ -0.5 us) = "no buffer dwell, sent within write()".
+        // We report it regardless of sign; only NaN when a timestamp is genuinely absent.
+        if (joint_states[i].send_timestamp_ns > 0 && joint_states[i].enqueue_timestamp_ns > 0)
         {
             joint_enqueue_to_wire_msg_.data[joint_params[i].msg_idx] =
                 static_cast<float>((joint_states[i].send_timestamp_ns - joint_states[i].enqueue_timestamp_ns) / 1e3);
@@ -1124,18 +1125,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_processing_msg_.data[can_interface_idx] = static_cast<float>((cycle_total_ns - tx_fill_ns - rx_dur_ns) / 1e3);
     joint_state_msg_mutex_.unlock_shared();
 
-    // DIAGNOSTIC (unconditional while TX timestamping is on): dump joint 0's raw timestamps so we
-    // can see why the metrics are NaN (zero? bad ordering? different clock epoch?).
-    if (enable_tx_timestamping_ && !joint_states.empty())
+    // Health check: warn (throttled) only if TX timestamping is on but a replied joint got no
+    // software TX timestamp. drained==0 -> nothing on the error queue; drained>0 -> match failure.
+    if (tx_ts_missing > 0)
     {
         unsigned int drained = can_interfaces_[can_interface_idx]->get_last_tx_errq_count();
-        const auto &j = joint_states[0];
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "[tx-ts diag] iface %s drained=%u | j0 status=%d enqueue=%ld send=%ld rx=%ld | send-enqueue=%ld rx-send=%ld",
-            can_interfaces_[can_interface_idx]->GetName().c_str(), drained,
-            static_cast<int>(j.communication_status),
-            (long)j.enqueue_timestamp_ns, (long)j.send_timestamp_ns, (long)j.rx_timestamp_ns,
-            (long)(j.send_timestamp_ns - j.enqueue_timestamp_ns), (long)(j.rx_timestamp_ns - j.send_timestamp_ns));
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "Software TX timestamp missing for %u replied joint(s) on %s (error-queue entries drained this cycle: %u)",
+            tx_ts_missing, can_interfaces_[can_interface_idx]->GetName().c_str(), drained);
     }
 }
 
