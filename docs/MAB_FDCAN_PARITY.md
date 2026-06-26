@@ -226,13 +226,11 @@ the lifecycle node), which matches reality since a controller cannot be swapped 
 sensible validation is to reject a configuration that puts two joints with different backends, or a
 `motor_type` that disagrees with the interface's backend, on the same interface.
 
-**Shared behavioral guarantee: deterministic send order.** Within one `send_and_receive`, every backend
-transmits commands in order of increasing motor `can_id` on that bus (lowest `can_id` first, then
-ascending), so the on-wire ordering is deterministic and independent of the order joints happen to
-appear in the configuration. The natural implementation is inside each backend's `send_and_receive`
-write loop: iterate a `can_id`-sorted index list (computed once, since identifiers are fixed). The
-receive loop is unaffected, because replies are matched by identifier rather than by position. See the
-ToDo in section 5.
+**Considered: deterministic send order.** Transmitting commands in increasing-`can_id` order within
+`send_and_receive` was prototyped but **deferred by decision**; the send order currently follows the
+configuration order. If a deterministic on-wire order is needed later, the natural implementation is a
+`can_id`-sorted index list in each backend's write loop (the receive loop is unaffected, since replies
+match by identifier).
 
 **Considered alternatives:**
 
@@ -252,6 +250,23 @@ The contract in `cubemars_com.hpp` stays **a single shared header** so both back
 Ordered by dependency. All work happens on `main` (via a feature branch off `main`). P0 items land a
 single node that builds and runs against either backend; P1 items complete the MAB instrumentation and
 protocol correctness; P2 items are cleanup and validation.
+
+**Implementation status** (branch `integrate-mab-backend`; the checklist below is kept as the original
+plan). Done so far:
+
+- Backend abstraction `CanCommBase`, with `CubemarsCan` implementing it (`f3c1ab8`).
+- Per-interface backend selection (`comm_backend_default` + `can_backends`) and the `on_configure`
+  factory (`e1722f5`).
+- `MabFdCan`: CAN FD socket plus the register protocol - commands, replies, motor enable/disable/zero
+  (`e1722f5`, `fb86aca`).
+- Invert and per-joint range clamping in `MabFdCan` (`c3b3bab`).
+- MAB Quick Status fault decoding (`b63bf45`).
+- `MAB` motor-type preset and the MAB usage docs (this change).
+
+Remaining: full RX/TX latency timestamping for the MAB backend (the latency topics read not-a-number or
+zero for MAB buses until then). Deferred by decision: the deterministic ascending-`can_id` send order.
+Optional follow-ups: a richer surfacing of the MAB Quick Status than the coarse `ErrorCode` mapping,
+documenting the gain semantics per backend, and on-hardware validation.
 
 ### P0 - Establish the backend abstraction on `main`
 
