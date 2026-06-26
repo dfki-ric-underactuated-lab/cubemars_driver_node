@@ -20,14 +20,15 @@ namespace cubemars
     #pragma pack(push, 1)
     struct Legacy_Response
     {
-        uint8_t frame_id = 0;
-        int16_t quick_status = 0;
-        uint8_t temperature = 0;
-        float position = 0.f;
-        float velocity = 0.f;
-        float torque = 0.f;
-        float encoder_position = 0.f;
-        float encoder_velocity = 0.f;
+        uint8_t frame_id = 0;          // 0x0A for a LEGACY_RESPONSE
+        uint16_t quick_status = 0;     // MAB Quick Status bitfield (bits 0-6 = error categories,
+                                       // bit 15 = target reached, rest reserved)
+        uint8_t temperature = 0;       // motor temperature [degrees Celsius]
+        float position = 0.f;          // main encoder position [rad]
+        float velocity = 0.f;          // main encoder velocity [rad/s]
+        float torque = 0.f;            // motor torque [Nm]
+        float encoder_position = 0.f;  // output encoder position [rad]
+        float encoder_velocity = 0.f;  // output encoder velocity [rad/s]
     };
 
     struct MotorMode_Message

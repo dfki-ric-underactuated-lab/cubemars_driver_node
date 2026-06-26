@@ -18,6 +18,38 @@
 namespace cubemars
 {
 
+namespace
+{
+// MAB Quick Status (the LEGACY_RESPONSE quick_status field). Bits 0-6 are error categories; bit 15 is
+// the "target reached" status (a normal condition, NOT a fault); the remaining bits are reserved. Only
+// the error bits indicate a fault.
+//   bit 0: main encoder error     bit 1: output encoder error   bit 2: calibration encoder error
+//   bit 3: MOSFET bridge error    bit 4: hardware error         bit 5: communication error
+//   bit 6: motion error
+constexpr uint16_t MAB_QS_ERROR_MASK = 0x007F; // bits 0..6
+
+// Map a MAB Quick Status onto the nearest CubeMars ErrorCode (the shared contract). Coarse by design:
+// the encoder and bridge categories map cleanly; hardware/communication/motion errors have no exact
+// CubeMars equivalent and report as MOTOR_STALL. The raw Quick Status carries the precise category;
+// surfacing it richly is a future improvement (see docs/MAB_FDCAN_PARITY.md).
+ErrorCode mab_quick_status_to_error(uint16_t qs)
+{
+    if ((qs & MAB_QS_ERROR_MASK) == 0)
+    {
+        return ErrorCode::NO_FAULT; // target-reached (bit 15) and reserved bits are not faults
+    }
+    if (qs & 0x07u)
+    {
+        return ErrorCode::ENCODER_FAULT; // bits 0-2: main / output / calibration encoder errors
+    }
+    if (qs & 0x08u)
+    {
+        return ErrorCode::MOSFET_OVER_TEMP; // bit 3: MOSFET bridge error
+    }
+    return ErrorCode::MOTOR_STALL; // bits 4-6: hardware / communication / motion errors
+}
+} // namespace
+
 MabFdCan::MabFdCan(const std::string &can_interface, const int &enable_loopback,
                    const std::vector<joint_config_t> &joint_configs,
                    const long &socket_timeout_sec, const long &socket_timeout_usec,
@@ -377,10 +409,10 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
             states[joint_index].torque = -states[joint_index].torque;
         }
         states[joint_index].temp = static_cast<float>(reply.temperature);
-        // MAB reports a quick_status word; its fault encoding is not documented here, so it is passed
-        // through (0 => NO_FAULT, non-zero => treated as a fault, matching the tested MAB behaviour).
-        // A proper MAB quick_status -> fault mapping is a pending step (see docs/MAB_FDCAN_PARITY.md).
-        states[joint_index].device_status = static_cast<ErrorCode>(reply.quick_status);
+        // Decode the MAB Quick Status into a fault. Only the error-category bits count: the
+        // "target reached" status (bit 15) and reserved bits are NOT faults, so normal operation no
+        // longer trips a spurious deactivation.
+        states[joint_index].device_status = mab_quick_status_to_error(reply.quick_status);
         states[joint_index].rx_timestamp_ns = now_ns;
         states[joint_index].dequeue_timestamp_ns = now_ns;
 
