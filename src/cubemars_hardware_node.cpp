@@ -318,9 +318,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     this->get_parameter("can_initial_connection_trials").as_int(),
                     enable_tx_timestamping_,
                     enable_can_error_frames_);
-                RCLCPP_INFO(this->get_logger(),
-                            "CAN interface '%s': opened MAB CAN FD socket (register protocol not yet implemented)",
-                            can_interface_name.c_str());
             }
             else
             {

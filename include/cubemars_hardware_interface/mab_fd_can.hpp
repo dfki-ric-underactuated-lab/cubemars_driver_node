@@ -12,15 +12,72 @@
 
 namespace cubemars
 {
-    // Communication backend for CubeMars motors driven by MAB electronics, which speak a register-write
-    // protocol over CAN FD (Flexible Data-rate). Ported from the MAB_FDCAN branch behind the shared
-    // CanCommBase interface so one node can drive CubeMars and MAB buses side by side.
+    // MAB register-protocol frames. MAB electronics are commanded by writing <register_id, value>
+    // pairs into a CAN FD payload (each frame starts with frame_id 0x40 and a padding byte) and reply
+    // with a fixed Legacy_Response. The structs are byte-packed because they are memcpy'd straight
+    // to/from the CAN FD frame data. They live in the MAB backend (not the shared cubemars_com.hpp)
+    // because they are MAB-implementation detail.
+    #pragma pack(push, 1)
+    struct Legacy_Response
+    {
+        uint8_t frame_id = 0;
+        int16_t quick_status = 0;
+        uint8_t temperature = 0;
+        float position = 0.f;
+        float velocity = 0.f;
+        float torque = 0.f;
+        float encoder_position = 0.f;
+        float encoder_velocity = 0.f;
+    };
+
+    struct MotorMode_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x140;
+        int8_t register_value = 0x04;
+    };
+
+    struct MotorState_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x142;
+        int16_t register_value = 0x27; // 0x40 to disable
+    };
+
+    struct RunZero_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x8C;
+        int8_t register_value = 1;
+    };
+
+    struct MotionCommand_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t pk_register_id = 0x50;
+        float desired_pk = 0.f;
+        int16_t dk_register_id = 0x51;
+        float desired_dk = 0.f;
+        int16_t position_register_id = 0x150;
+        float desired_position = 0.f;
+        int16_t velocity_register_id = 0x151;
+        float desired_velocity = 0.f;
+        int16_t torque_register_id = 0x152;
+        float desired_torque = 0.f;
+    };
+    #pragma pack(pop)
+
+    // Communication backend for CubeMars motors driven by MAB electronics: a register-write protocol
+    // over CAN FD (Flexible Data-rate). Ported from the MAB_FDCAN branch behind the shared CanCommBase
+    // interface so one node can drive CubeMars and MAB buses side by side.
     //
-    // SCOPE OF THIS STEP: the constructor opens and configures the CAN FD socket (this is the part that
-    // differs from classic CAN: CAN_RAW_FD_FRAMES, a canfd_frame). The register protocol itself
-    // (send_and_receive, motor enable/disable, timestamping diagnostics) is ported in a following step;
-    // until then those methods throw a clear "not implemented yet" error and the getters return 0. See
-    // docs/MAB_FDCAN_PARITY.md.
+    // Deferred to following steps (see docs/MAB_FDCAN_PARITY.md): invert handling, per-joint range
+    // clamping, a documented MAB quick_status -> fault mapping, and the full RX/TX timestamping suite
+    // (the diagnostics getters return 0 until then).
     class MabFdCan : public CanCommBase
     {
     public:
@@ -41,7 +98,7 @@ namespace cubemars
         const std::string &GetName() override { return can_interface_; }
         canid_t get_can_id(unsigned int joint_index) override { return joint_configs_.at(joint_index).can_id; }
 
-        // Diagnostics: not produced yet (the protocol/timestamping port is a following step).
+        // Diagnostics: not produced yet (the timestamping port is a following step).
         int64_t get_tx_fill_duration_ns() const override { return 0; }
         int64_t get_rx_duration_ns() const override { return 0; }
         int64_t get_tx_fill_end_ns() const override { return 0; }
@@ -50,14 +107,21 @@ namespace cubemars
         canid_t get_last_error_canid() const override { return 0; }
 
     private:
+        // Enable/disable a motor by writing the mode + state registers (with a read-back acknowledgement),
+        // and zero a motor by writing the RunZero register.
+        void send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms);
+        void send_zero_frame(const canid_t &can_id, RunZero_Message zm);
+
         std::string can_interface_;
         int enable_loopback_;
         std::vector<joint_config_t> joint_configs_;
         long socket_timeout_sec_;
         long socket_timeout_usec_;
-        unsigned int max_initial_connection_trials_; // used by the (pending) connection-priming logic
-        bool enable_tx_timestamping_;                // used by the (pending) timestamping logic
-        bool enable_can_error_frames_;               // used by the (pending) error-frame handling
+        unsigned int max_initial_connection_trials_;
+        bool enable_tx_timestamping_;  // used by the (pending) timestamping logic
+        bool enable_can_error_frames_; // used by the (pending) error-frame handling
+        std::vector<bool> send_ok_;
+        std::vector<bool> recv_ok_;
         int can_socket_fd_;
         canfd_frame send_frame_;
         canfd_frame recv_frame_;

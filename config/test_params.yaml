@@ -10,9 +10,9 @@ cubemars_hardware_node:
 
     # Communication backend per CAN interface: "cubemars" (classic CAN) or "mab" (CAN FD register
     # protocol). comm_backend_default applies to any interface not listed under can_backends.
-    # NOTE: "mab" currently opens the CAN FD socket but the MAB register protocol is not implemented
-    # yet, so configuration still fails at motor enable with a clear error. Flip an interface to "mab"
-    # to exercise the socket opening; full MAB support comes in a following step.
+    # NOTE: "mab" drives MAB electronics over CAN FD (the MAB register protocol). The interface must be
+    # brought up in CAN FD mode. Invert, per-joint range clamping, MAB fault decoding and latency
+    # timestamping are not wired up for the MAB backend yet (see docs/MAB_FDCAN_PARITY.md).
     comm_backend_default: cubemars
     can_backends:
       can0: cubemars
