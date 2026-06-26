@@ -14,6 +14,8 @@
 #include <sys/socket.h>
 
 #include <linux/can/raw.h>
+#include <linux/errqueue.h>
+#include <linux/net_tstamp.h>
 
 namespace cubemars
 {
@@ -148,6 +150,28 @@ MabFdCan::MabFdCan(const std::string &can_interface, const int &enable_loopback,
         throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
 
+    // Kernel software RX timestamps (CLOCK_REALTIME ns); always on (cheap), mirroring the CubeMars
+    // backend. Used to stamp ~/joint_states and the latency topics.
+    int ts_on = 1;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPNS, &ts_on, sizeof(ts_on)) < 0)
+    {
+        close(can_socket_fd_);
+        throw can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
+    }
+    // SO_TIMESTAMPING: always request the card hardware RX timestamp (ts[2]); add software TX-completion
+    // timestamps (reported on the error queue, drained per cycle) only when enabled. Same scheme as the
+    // CubeMars backend; the flags coexist with SO_TIMESTAMPNS.
+    int ts_flags = SOF_TIMESTAMPING_RX_HARDWARE | SOF_TIMESTAMPING_RAW_HARDWARE;
+    if (enable_tx_timestamping_)
+    {
+        ts_flags |= SOF_TIMESTAMPING_TX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
+    }
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPING, &ts_flags, sizeof(ts_flags)) < 0)
+    {
+        close(can_socket_fd_);
+        throw can_interface_error(std::format("Failed to enable SO_TIMESTAMPING - {} ", std::string(strerror(errno))));
+    }
+
     // setup vars
     memset(&send_frame_, 0, sizeof(send_frame_));
     send_frame_.len = CAN_MAX_DLEN;
@@ -156,6 +180,98 @@ MabFdCan::MabFdCan(const std::string &can_interface, const int &enable_loopback,
 MabFdCan::~MabFdCan()
 {
     close(can_socket_fd_); // If this goes wrong, we cant do anything
+}
+
+int MabFdCan::recv_frame_with_timestamp(struct canfd_frame &frame, int64_t &rx_timestamp_ns, int64_t &rx_hw_timestamp_ns)
+{
+    struct iovec iov;
+    iov.iov_base = &frame;
+    iov.iov_len = sizeof(frame);
+    // Room for both the SO_TIMESTAMPNS cmsg (1 timespec) and the SCM_TIMESTAMPING cmsg (3 timespecs).
+    char ctrl[CMSG_SPACE(sizeof(struct timespec)) + CMSG_SPACE(3 * sizeof(struct timespec))];
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = ctrl;
+    msg.msg_controllen = sizeof(ctrl);
+
+    int nbytes = ::recvmsg(can_socket_fd_, &msg, 0);
+    rx_timestamp_ns = 0;
+    rx_hw_timestamp_ns = 0;
+    if (nbytes < 0)
+    {
+        return nbytes;
+    }
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c))
+    {
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SO_TIMESTAMPNS)
+        {
+            struct timespec ts;
+            memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+            rx_timestamp_ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+        }
+        else if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMPING)
+        {
+            struct timespec ts[3]; // ts[0]=software, ts[1]=legacy(unused), ts[2]=raw hardware
+            memcpy(&ts, CMSG_DATA(c), sizeof(ts));
+            rx_hw_timestamp_ns = static_cast<int64_t>(ts[2].tv_sec) * 1000000000LL + ts[2].tv_nsec;
+        }
+    }
+    return nbytes;
+}
+
+void MabFdCan::collect_tx_timestamps(std::vector<joint_state_t> &states)
+{
+    // Drain the error queue: each entry carries the echoed command frame and an SCM_TIMESTAMPING control
+    // message whose software timestamp (ts[0]) marks TX completion.
+    last_tx_errq_count_ = 0;
+    while (true)
+    {
+        struct canfd_frame frame;
+        struct iovec iov;
+        iov.iov_base = &frame;
+        iov.iov_len = sizeof(frame);
+        char ctrl[256];
+        struct msghdr msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = ctrl;
+        msg.msg_controllen = sizeof(ctrl);
+
+        int nbytes = ::recvmsg(can_socket_fd_, &msg, MSG_ERRQUEUE | MSG_DONTWAIT);
+        if (nbytes < 0)
+        {
+            break; // EAGAIN/EWOULDBLOCK: error queue drained
+        }
+        last_tx_errq_count_++;
+
+        int64_t tx_ns = 0;
+        for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); c != nullptr; c = CMSG_NXTHDR(&msg, c))
+        {
+            if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_TIMESTAMPING)
+            {
+                struct scm_timestamping tss;
+                memcpy(&tss, CMSG_DATA(c), sizeof(tss));
+                // ts[0] is the software timestamp (CLOCK_REALTIME); ts[2] would be hardware.
+                tx_ns = static_cast<int64_t>(tss.ts[0].tv_sec) * 1000000000LL + tss.ts[0].tv_nsec;
+            }
+        }
+        if (tx_ns == 0)
+        {
+            continue; // no software timestamp on this entry
+        }
+
+        // Match the echoed frame to a joint by can_id (same convention as the reply path).
+        const canid_t echoed_id = frame.can_id;
+        auto it = std::find_if(joint_configs_.begin(), joint_configs_.end(),
+                               [&](const auto &conf) { return conf.can_id == echoed_id; });
+        if (it != joint_configs_.end())
+        {
+            states[it - joint_configs_.begin()].send_timestamp_ns = tx_ns;
+        }
+    }
 }
 
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
@@ -310,9 +426,12 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         throw std::out_of_range("cmds, states have to have the correct size of " + std::to_string(joint_configs_.size()));
     }
 
-    // Write all commands as MAB MotionCommand register frames (CAN FD, bit-rate switched).
-    // NOTE: invert and per-joint range clamping are NOT applied here yet (the CubeMars backend does
-    // both); adding them for MAB is a pending correctness step (see docs/MAB_FDCAN_PARITY.md).
+    struct timespec ts_now;
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    const int64_t tx_fill_start_ns = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
+
+    // Write all commands as MAB MotionCommand register frames (CAN FD, bit-rate switched), applying
+    // invert and per-joint range clamping (below).
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
         const joint_config_t &cfg = joint_configs_[i];
@@ -342,7 +461,7 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         send_frame_.flags = CANFD_BRS;
         std::memcpy(send_frame_.data, &cmd, sizeof(MotionCommand_Message));
 
-        // Timing fields not measured by this backend yet (timestamping is a following step).
+        // send_timestamp_ns is filled from the error queue by collect_tx_timestamps() once TX completes.
         states[i].send_timestamp_ns = 0;
         states[i].enqueue_timestamp_ns = 0;
         states[i].rx_hw_timestamp_ns = 0;
@@ -355,10 +474,17 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         }
         else
         {
+            // Userspace moment this frame finished being written into the TX buffer.
+            clock_gettime(CLOCK_REALTIME, &ts_now);
+            states[i].enqueue_timestamp_ns = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
             send_ok_[i] = true;
             states[i].communication_status = ComStatus::CAN_NO_RESPONSE; // updated when the reply arrives
         }
     }
+    // TX buffer is now filled with all command frames.
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    tx_fill_end_ns_ = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
+    tx_fill_duration_ns_ = tx_fill_end_ns_ - tx_fill_start_ns;
 
     // Receive all replies (Legacy_Response), matched to a joint by can_id.
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
@@ -369,14 +495,19 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         }
         recv_ok_[i] = false;
 
+        int64_t rx_ns = 0;
+        int64_t rx_hw_ns = 0;
         memset(&recv_frame_, 0, sizeof(recv_frame_));
-        int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        int nbytes = recv_frame_with_timestamp(recv_frame_, rx_ns, rx_hw_ns);
         if (nbytes < 0)
         {
             states[i].communication_status = ComStatus::CAN_READ_FAILED;
             states[i].com_errno = errno;
             continue;
         }
+        // Userspace moment the reply was read into node space.
+        clock_gettime(CLOCK_REALTIME, &ts_now);
+        const int64_t deq_ns = static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec;
 
         const canid_t reply_id = recv_frame_.can_id;
         auto it = std::find_if(joint_configs_.begin(), joint_configs_.end(),
@@ -387,13 +518,6 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         }
         const unsigned int joint_index = it - joint_configs_.begin();
         recv_ok_[joint_index] = true;
-
-        // Userspace reply time. NOTE: this is not a kernel RX timestamp (this backend does not enable
-        // SO_TIMESTAMPNS yet), but it is good enough for stamping ~/joint_states. The full
-        // hardware/software timestamping suite is a following step.
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-        const int64_t now_ns = static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 
         Legacy_Response reply;
         std::memcpy(&reply, recv_frame_.data, sizeof(reply));
@@ -413,11 +537,20 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         // "target reached" status (bit 15) and reserved bits are NOT faults, so normal operation no
         // longer trips a spurious deactivation.
         states[joint_index].device_status = mab_quick_status_to_error(reply.quick_status);
-        states[joint_index].rx_timestamp_ns = now_ns;
-        states[joint_index].dequeue_timestamp_ns = now_ns;
+        states[joint_index].rx_timestamp_ns = rx_ns;
+        states[joint_index].rx_hw_timestamp_ns = rx_hw_ns;
+        states[joint_index].dequeue_timestamp_ns = deq_ns;
 
         states[joint_index].communication_status =
             send_ok_[joint_index] ? ComStatus::SUCCESS : ComStatus::CAN_WRITE_FAILED_BUT_RESPONSE_RECEIVED;
+    }
+
+    // Time spent in the receive phase, and (if enabled) drain the software TX-completion timestamps.
+    clock_gettime(CLOCK_REALTIME, &ts_now);
+    rx_duration_ns_ = (static_cast<int64_t>(ts_now.tv_sec) * 1000000000LL + ts_now.tv_nsec) - tx_fill_end_ns_;
+    if (enable_tx_timestamping_)
+    {
+        collect_tx_timestamps(states);
     }
 }
 

@@ -99,11 +99,12 @@ namespace cubemars
         const std::string &GetName() override { return can_interface_; }
         canid_t get_can_id(unsigned int joint_index) override { return joint_configs_.at(joint_index).can_id; }
 
-        // Diagnostics: not produced yet (the timestamping port is a following step).
-        int64_t get_tx_fill_duration_ns() const override { return 0; }
-        int64_t get_rx_duration_ns() const override { return 0; }
-        int64_t get_tx_fill_end_ns() const override { return 0; }
-        unsigned int get_last_tx_errq_count() const override { return 0; }
+        // Per-cycle timing diagnostics from the last send_and_receive() (CLOCK_REALTIME ns).
+        int64_t get_tx_fill_duration_ns() const override { return tx_fill_duration_ns_; }
+        int64_t get_rx_duration_ns() const override { return rx_duration_ns_; }
+        int64_t get_tx_fill_end_ns() const override { return tx_fill_end_ns_; }
+        unsigned int get_last_tx_errq_count() const override { return last_tx_errq_count_; }
+        // CAN bus-error frame delivery is not enabled for the MAB backend yet (optional follow-up).
         unsigned int get_last_error_count() const override { return 0; }
         canid_t get_last_error_canid() const override { return 0; }
 
@@ -113,16 +114,27 @@ namespace cubemars
         void send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms);
         void send_zero_frame(const canid_t &can_id, RunZero_Message zm);
 
+        // recvmsg-based receive that pulls the kernel software RX timestamp (SO_TIMESTAMPNS, CLOCK_REALTIME
+        // ns) and the card hardware RX timestamp (SCM_TIMESTAMPING ts[2], raw clock); each 0 if unavailable.
+        int recv_frame_with_timestamp(struct canfd_frame &frame, int64_t &rx_timestamp_ns, int64_t &rx_hw_timestamp_ns);
+        // Drain the socket error queue (MSG_ERRQUEUE) of software TX-completion timestamps and assign each
+        // to the matching joint's send_timestamp_ns (matched by the echoed frame's can_id).
+        void collect_tx_timestamps(std::vector<joint_state_t> &states);
+
         std::string can_interface_;
         int enable_loopback_;
         std::vector<joint_config_t> joint_configs_;
         long socket_timeout_sec_;
         long socket_timeout_usec_;
         unsigned int max_initial_connection_trials_;
-        bool enable_tx_timestamping_;  // used by the (pending) timestamping logic
-        bool enable_can_error_frames_; // used by the (pending) error-frame handling
+        bool enable_tx_timestamping_;  // software TX timestamps + the per-cycle error-queue drain
+        bool enable_can_error_frames_; // reserved for the (pending, optional) CAN error-frame handling
         std::vector<bool> send_ok_;
         std::vector<bool> recv_ok_;
+        int64_t tx_fill_duration_ns_ = 0; // time to write all command frames into the TX buffer
+        int64_t rx_duration_ns_ = 0;      // time to receive all replies after the TX buffer was filled
+        int64_t tx_fill_end_ns_ = 0;      // timestamp the TX buffer finished being filled
+        unsigned int last_tx_errq_count_ = 0; // error-queue entries drained in the last cycle
         int can_socket_fd_;
         canfd_frame send_frame_;
         canfd_frame recv_frame_;
