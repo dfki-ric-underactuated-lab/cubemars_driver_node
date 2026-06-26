@@ -1,6 +1,7 @@
 #include "cubemars_hardware_interface/mab_fd_can.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cstring>
 #include <ctime>
@@ -282,12 +283,27 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
     // both); adding them for MAB is a pending correctness step (see docs/MAB_FDCAN_PARITY.md).
     for (unsigned int i = 0; i < joint_configs_.size(); i++)
     {
+        const joint_config_t &cfg = joint_configs_[i];
+
+        // Mirror the CubeMars backend's command conditioning: optionally invert pos/vel/torque, then
+        // clamp every commanded quantity to the motor's configured range. fminf/fmaxf is NaN-tolerant
+        // (matching CubemarsCan), so an unset range leaves the value untouched. The ranges come from the
+        // motor_type preset; confirm they are in the units the MAB controller expects.
+        float pos = cfg.invert ? -cmds[i].pos : cmds[i].pos;
+        float vel = cfg.invert ? -cmds[i].vel : cmds[i].vel;
+        float torque = cfg.invert ? -cmds[i].torque : cmds[i].torque;
+        pos = fminf(fmaxf(static_cast<float>(cfg.P_MIN), pos), static_cast<float>(cfg.P_MAX));
+        vel = fminf(fmaxf(static_cast<float>(cfg.V_MIN), vel), static_cast<float>(cfg.V_MAX));
+        torque = fminf(fmaxf(static_cast<float>(cfg.I_MIN), torque), static_cast<float>(cfg.I_MAX));
+        const float kp = fminf(fmaxf(static_cast<float>(cfg.KP_MIN), cmds[i].kp), static_cast<float>(cfg.KP_MAX));
+        const float kd = fminf(fmaxf(static_cast<float>(cfg.KD_MIN), cmds[i].kd), static_cast<float>(cfg.KD_MAX));
+
         MotionCommand_Message cmd;
-        cmd.desired_pk = cmds[i].kp;
-        cmd.desired_dk = cmds[i].kd;
-        cmd.desired_position = cmds[i].pos;
-        cmd.desired_velocity = cmds[i].vel;
-        cmd.desired_torque = cmds[i].torque;
+        cmd.desired_pk = kp;
+        cmd.desired_dk = kd;
+        cmd.desired_position = pos;
+        cmd.desired_velocity = vel;
+        cmd.desired_torque = torque;
 
         send_frame_.can_id = joint_configs_[i].can_id;
         send_frame_.len = sizeof(MotionCommand_Message);
@@ -353,6 +369,13 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         states[joint_index].pos = reply.position;
         states[joint_index].vel = reply.velocity;
         states[joint_index].torque = reply.torque;
+        // Undo the command inversion on the reported state, mirroring the CubeMars backend.
+        if (joint_configs_[joint_index].invert)
+        {
+            states[joint_index].pos = -states[joint_index].pos;
+            states[joint_index].vel = -states[joint_index].vel;
+            states[joint_index].torque = -states[joint_index].torque;
+        }
         states[joint_index].temp = static_cast<float>(reply.temperature);
         // MAB reports a quick_status word; its fault encoding is not documented here, so it is passed
         // through (0 => NO_FAULT, non-zero => treated as a fault, matching the tested MAB behaviour).
