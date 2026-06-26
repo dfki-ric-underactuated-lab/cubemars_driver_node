@@ -8,6 +8,7 @@
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
+#include "cubemars_hardware_interface/can_comm_base.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <atomic>
 #include <mutex>
@@ -191,7 +192,10 @@ private:
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<unsigned int> num_can_errors_per_interfaces_;
-    std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
+    // Stored as the abstract backend type so the node can drive either electronics (CubeMars classic
+    // CAN or, once ported, MAB FDCAN) through one pointer; the concrete type is chosen where the
+    // objects are constructed in on_configure.
+    std::vector<std::shared_ptr<cubemars::CanCommBase>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<int64_t> last_cycle_end_ns_per_can_interface_; // CLOCK_MONOTONIC end of the previous can_cycle_callback, for the inter-cycle gap
 
