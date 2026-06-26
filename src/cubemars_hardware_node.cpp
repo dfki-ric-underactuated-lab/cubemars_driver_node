@@ -39,6 +39,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
     this->declare_parameter_if_undeclared("enable_tx_timestamping", true);
     this->declare_parameter_if_undeclared("enable_can_error_frames", false);
+    // Per-CAN-interface communication backend selection (see docs/MAB_FDCAN_PARITY.md): each interface
+    // picks "cubemars" or "mab" via can_backends.<interface>, defaulting to comm_backend_default.
+    this->declare_parameter_if_undeclared("comm_backend_default", std::string("cubemars"));
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -51,6 +54,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         max_can_errors_before_motor_shutdown_ = this->get_parameter("max_can_errors_before_motor_shutdown").as_int();
         enable_tx_timestamping_ = this->get_parameter("enable_tx_timestamping").as_bool();
         enable_can_error_frames_ = this->get_parameter("enable_can_error_frames").as_bool();
+        const std::string comm_backend_default = this->get_parameter("comm_backend_default").as_string();
 
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
@@ -278,20 +282,52 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             }
         }
 
-        // Now create can devices and callback
+        // Now create can devices and callback. The communication backend is selected per CAN interface
+        // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
+        // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side. See docs/MAB_FDCAN_PARITY.md.
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
-            can_interfaces_[can_interface_id] = std::make_shared<cubemars::CubemarsCan>(
-                can_interface_name,
-                this->get_parameter("enable_loopback").as_bool(),
-                joint_configs_per_can_interface[can_interface_id],
-                this->get_parameter("can_socket_timeout_sec").as_int(),
-                this->get_parameter("can_socket_timeout_usec").as_int(),
-                this->get_parameter("can_initial_connection_trials").as_int(),
-                enable_tx_timestamping_,
-                enable_can_error_frames_
-            );
+
+            const std::string backend_param = "can_backends." + can_interface_name;
+            this->declare_parameter_if_undeclared(backend_param, comm_backend_default);
+            const std::string backend = this->get_parameter(backend_param).as_string();
+            RCLCPP_INFO(this->get_logger(), "CAN interface '%s': selected comm backend '%s'",
+                        can_interface_name.c_str(), backend.c_str());
+
+            if (backend == "cubemars")
+            {
+                can_interfaces_[can_interface_id] = std::make_shared<cubemars::CubemarsCan>(
+                    can_interface_name,
+                    this->get_parameter("enable_loopback").as_bool(),
+                    joint_configs_per_can_interface[can_interface_id],
+                    this->get_parameter("can_socket_timeout_sec").as_int(),
+                    this->get_parameter("can_socket_timeout_usec").as_int(),
+                    this->get_parameter("can_initial_connection_trials").as_int(),
+                    enable_tx_timestamping_,
+                    enable_can_error_frames_);
+            }
+            else if (backend == "mab")
+            {
+                can_interfaces_[can_interface_id] = std::make_shared<cubemars::MabFdCan>(
+                    can_interface_name,
+                    this->get_parameter("enable_loopback").as_bool(),
+                    joint_configs_per_can_interface[can_interface_id],
+                    this->get_parameter("can_socket_timeout_sec").as_int(),
+                    this->get_parameter("can_socket_timeout_usec").as_int(),
+                    this->get_parameter("can_initial_connection_trials").as_int(),
+                    enable_tx_timestamping_,
+                    enable_can_error_frames_);
+                RCLCPP_INFO(this->get_logger(),
+                            "CAN interface '%s': opened MAB CAN FD socket (register protocol not yet implemented)",
+                            can_interface_name.c_str());
+            }
+            else
+            {
+                throw cubemars::can_interface_error(
+                    "Unknown comm_backend '" + backend + "' for interface '" + can_interface_name +
+                    "'. Valid values: 'cubemars', 'mab'.");
+            }
         }
 
         // Goes to default callback group

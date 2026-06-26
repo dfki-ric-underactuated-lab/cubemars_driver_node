@@ -7,6 +7,17 @@ cubemars_hardware_node:
     can_socket_timeout_sec: 0
     can_socket_timeout_usec: 10000
     max_can_errors_before_motor_shutdown: 10
+
+    # Communication backend per CAN interface: "cubemars" (classic CAN) or "mab" (CAN FD register
+    # protocol). comm_backend_default applies to any interface not listed under can_backends.
+    # NOTE: "mab" currently opens the CAN FD socket but the MAB register protocol is not implemented
+    # yet, so configuration still fails at motor enable with a clear error. Flip an interface to "mab"
+    # to exercise the socket opening; full MAB support comes in a following step.
+    comm_backend_default: cubemars
+    can_backends:
+      can0: cubemars
+      can1: cubemars   # set to "mab" to drive this bus with MAB electronics (once supported)
+
     # joint_zero_positions: #Experimentally determined BY FRANEK
     #   - 0.0
     #   - -0.7

@@ -9,6 +9,7 @@
 #include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
 #include "cubemars_hardware_interface/can_comm_base.hpp"
+#include "cubemars_hardware_interface/mab_fd_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <atomic>
 #include <mutex>

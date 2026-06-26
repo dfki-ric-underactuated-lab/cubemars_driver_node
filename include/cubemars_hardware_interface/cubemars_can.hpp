@@ -23,27 +23,8 @@
 
 namespace cubemars
 {
-    class can_interface_error : public std::runtime_error
-    {
-    public:
-        explicit can_interface_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit can_interface_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
-    class can_device_error : public std::runtime_error
-    {
-    public:
-        explicit can_device_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit can_device_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
-    class motor_error : public std::runtime_error
-    {
-    public:
-        explicit motor_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit motor_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
+    // CAN exception types (can_interface_error / can_device_error / motor_error) are declared in
+    // can_comm_base.hpp so every backend shares them.
     class CubemarsCan : public CanCommBase
     {
     public:

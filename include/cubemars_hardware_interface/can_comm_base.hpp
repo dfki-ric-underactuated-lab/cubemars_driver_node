@@ -2,6 +2,7 @@
 #define CUBEMARS_CAN_COMM_BASE_HPP_
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,29 @@
 
 namespace cubemars
 {
+    // Shared CAN communication exception types. Thrown by any backend and caught by the node;
+    // can_interface_error in particular is handled specially in on_configure.
+    class can_interface_error : public std::runtime_error
+    {
+    public:
+        explicit can_interface_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit can_interface_error(const char *__arg) : std::runtime_error(__arg) {};
+    };
+
+    class can_device_error : public std::runtime_error
+    {
+    public:
+        explicit can_device_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit can_device_error(const char *__arg) : std::runtime_error(__arg) {};
+    };
+
+    class motor_error : public std::runtime_error
+    {
+    public:
+        explicit motor_error(const std::string &__arg) : std::runtime_error(__arg) {};
+        explicit motor_error(const char *__arg) : std::runtime_error(__arg) {};
+    };
+
     // Abstract communication backend: the surface the lifecycle node uses to talk to the motors on one
     // CAN interface. Concrete backends implement it, so the node can drive different electronics through
     // one pointer type, selected by configuration:
