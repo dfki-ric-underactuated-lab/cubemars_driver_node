@@ -73,12 +73,7 @@ namespace cubemars
     #pragma pack(pop)
 
     // Communication backend for CubeMars motors driven by MAB electronics: a register-write protocol
-    // over CAN FD (Flexible Data-rate). Ported from the MAB_FDCAN branch behind the shared CanCommBase
-    // interface so one node can drive CubeMars and MAB buses side by side.
-    //
-    // Deferred to following steps (see docs/MAB_FDCAN_PARITY.md): invert handling, per-joint range
-    // clamping, a documented MAB quick_status -> fault mapping, and the full RX/TX timestamping suite
-    // (the diagnostics getters return 0 until then).
+    // over CAN FD (Flexible Data-rate).
     class MabFdCan : public CanCommBase
     {
     public:
@@ -104,7 +99,7 @@ namespace cubemars
         int64_t get_rx_duration_ns() const override { return rx_duration_ns_; }
         int64_t get_tx_fill_end_ns() const override { return tx_fill_end_ns_; }
         unsigned int get_last_tx_errq_count() const override { return last_tx_errq_count_; }
-        // CAN bus-error frame delivery is not enabled for the MAB backend yet (optional follow-up).
+        // CAN bus-error frame delivery is not enabled for the MAB backend yet.
         unsigned int get_last_error_count() const override { return 0; }
         canid_t get_last_error_canid() const override { return 0; }
 
@@ -128,7 +123,7 @@ namespace cubemars
         long socket_timeout_usec_;
         unsigned int max_initial_connection_trials_;
         bool enable_tx_timestamping_;  // software TX timestamps + the per-cycle error-queue drain
-        bool enable_can_error_frames_; // reserved for the (pending, optional) CAN error-frame handling
+        bool enable_can_error_frames_; // reserved for the CAN error-frame handling
         std::vector<bool> send_ok_;
         std::vector<bool> recv_ok_;
         int64_t tx_fill_duration_ns_ = 0; // time to write all command frames into the TX buffer

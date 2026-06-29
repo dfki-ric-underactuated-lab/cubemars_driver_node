@@ -39,7 +39,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
     this->declare_parameter_if_undeclared("enable_tx_timestamping", true);
     this->declare_parameter_if_undeclared("enable_can_error_frames", false);
-    // Per-CAN-interface communication backend selection (see docs/MAB_FDCAN_PARITY.md): each interface
+    // Per-CAN-interface communication backend selection: each interface
     // picks "cubemars" or "mab" via can_backends.<interface>, defaulting to comm_backend_default.
     this->declare_parameter_if_undeclared("comm_backend_default", std::string("cubemars"));
 
@@ -284,7 +284,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
         // Now create can devices and callback. The communication backend is selected per CAN interface
         // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
-        // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side. See docs/MAB_FDCAN_PARITY.md.
+        // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
@@ -344,7 +344,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         bool failure = false;
         std::string error_string = "";
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-        { 
+        {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 try // We catch this to actually now which all are missing and if it is a bus problem or a motor problem
@@ -361,12 +361,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         }
 
         if(failure){
-        
+
                 // Notify users
                 RCLCPP_ERROR(this->get_logger(), "Device error while enabling motor: \n %s", error_string.c_str());
                 RCLCPP_WARN(this->get_logger(), "Try to disable motors, might not work");
                 for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-                { 
+                {
                 for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
                     {
                      try
@@ -382,7 +382,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 can_interfaces_.clear();
                 return LifecycleNodeInterface::CallbackReturn::ERROR;
         }
-        
+
         // Register runtime parameter callback now that all per-joint state is in place
         on_set_parameters_handle_ = this->add_on_set_parameters_callback(
             std::bind(&CubeMarsHardwareNode::on_set_parameters_callback, this, std::placeholders::_1));
@@ -1249,7 +1249,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
     }
 
-    
+
 
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
     int64_t tx_fill_ns = can_interfaces_[can_interface_idx]->get_tx_fill_duration_ns();

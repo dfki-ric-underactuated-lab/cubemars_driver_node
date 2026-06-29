@@ -38,14 +38,8 @@ namespace cubemars
     // Abstract communication backend: the surface the lifecycle node uses to talk to the motors on one
     // CAN interface. Concrete backends implement it, so the node can drive different electronics through
     // one pointer type, selected by configuration:
-    //   - CubemarsCan  : classic CAN, CubeMars electronics (V2/V3). The current implementation.
-    //   - MabFdCan     : CAN FD register protocol, MAB electronics. To be ported in from MAB_FDCAN.
-    //
-    // This is exactly the set of methods the node calls on a per-interface communication object; it is
-    // intentionally the same signatures CubemarsCan already exposed, so introducing the base class is a
-    // behaviour-preserving change. The constructor is deliberately NOT part of the interface: each
-    // backend is built concretely (later, by a small factory chosen from a config parameter), and only
-    // then used polymorphically through this base. See docs/MAB_FDCAN_PARITY.md for the plan.
+    //   - CubemarsCan  : classic CAN, CubeMars electronics (V2/V3).
+    //   - MabFdCan     : CAN FD register protocol, MAB electronics.
     class CanCommBase
     {
     public:

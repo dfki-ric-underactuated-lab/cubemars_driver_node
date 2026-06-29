@@ -194,7 +194,7 @@ private:
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<unsigned int> num_can_errors_per_interfaces_;
     // Stored as the abstract backend type so the node can drive either electronics (CubeMars classic
-    // CAN or, once ported, MAB FDCAN) through one pointer; the concrete type is chosen where the
+    // CAN or MAB FDCAN) through one pointer; the concrete type is chosen where the
     // objects are constructed in on_configure.
     std::vector<std::shared_ptr<cubemars::CanCommBase>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;

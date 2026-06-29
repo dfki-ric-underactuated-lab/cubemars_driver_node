@@ -1,3 +1,17 @@
+# CubeMars hardware interface (ROS 2)
+
+A Robot Operating System 2 (ROS 2) driver for CubeMars (T-Motor) quasi-direct-drive actuators on a
+Controller Area Network (CAN) bus. It drives CubeMars motors with either controller family:
+
+- **CubeMars** electronics, over classic CAN.
+- **MAB** controllers, over CAN with Flexible Data-rate (CAN FD), using the MAB register protocol.
+
+The communication backend is selected per CAN interface (see "Communication backend per CAN interface"
+below). For the MAB protocol, see the MAB MD80 / CANdle documentation:
+<https://mabrobotics.github.io/MD80-x-CANdle-Documentation/> - in particular the
+[FDCAN protocol](https://mabrobotics.github.io/MD80-x-CANdle-Documentation/MD/Communication/fdcan.html)
+and [Quick Status](https://mabrobotics.github.io/MD80-x-CANdle-Documentation/MD/status_utility.html) pages.
+
 # Enable CAN interface
 
 

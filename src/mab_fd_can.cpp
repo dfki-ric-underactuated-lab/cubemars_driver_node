@@ -33,7 +33,7 @@ constexpr uint16_t MAB_QS_ERROR_MASK = 0x007F; // bits 0..6
 // Map a MAB Quick Status onto the nearest CubeMars ErrorCode (the shared contract). Coarse by design:
 // the encoder and bridge categories map cleanly; hardware/communication/motion errors have no exact
 // CubeMars equivalent and report as MOTOR_STALL. The raw Quick Status carries the precise category;
-// surfacing it richly is a future improvement (see docs/MAB_FDCAN_PARITY.md).
+// future improvement: MAB Status fully exposed.
 ErrorCode mab_quick_status_to_error(uint16_t qs)
 {
     if ((qs & MAB_QS_ERROR_MASK) == 0)
@@ -150,8 +150,8 @@ MabFdCan::MabFdCan(const std::string &can_interface, const int &enable_loopback,
         throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
 
-    // Kernel software RX timestamps (CLOCK_REALTIME ns); always on (cheap), mirroring the CubeMars
-    // backend. Used to stamp ~/joint_states and the latency topics.
+    // Kernel software RX timestamps (CLOCK_REALTIME ns); always on (cheap)
+    // Used to stamp ~/joint_states and the latency topics.
     int ts_on = 1;
     if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_TIMESTAMPNS, &ts_on, sizeof(ts_on)) < 0)
     {
@@ -159,8 +159,8 @@ MabFdCan::MabFdCan(const std::string &can_interface, const int &enable_loopback,
         throw can_interface_error(std::format("Failed to enable SO_TIMESTAMPNS - {} ", std::string(strerror(errno))));
     }
     // SO_TIMESTAMPING: always request the card hardware RX timestamp (ts[2]); add software TX-completion
-    // timestamps (reported on the error queue, drained per cycle) only when enabled. Same scheme as the
-    // CubeMars backend; the flags coexist with SO_TIMESTAMPNS.
+    // timestamps (reported on the error queue, drained per cycle) only when enabled.
+    // The flags coexist with SO_TIMESTAMPNS.
     int ts_flags = SOF_TIMESTAMPING_RX_HARDWARE | SOF_TIMESTAMPING_RAW_HARDWARE;
     if (enable_tx_timestamping_)
     {
@@ -276,9 +276,7 @@ void MabFdCan::collect_tx_timestamps(std::vector<joint_state_t> &states)
 
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
 {
-    // NOTE: the write sizes mirror the tested MAB_FDCAN code (the mode write uses the full canfd_frame
-    // size, the state write uses the classic can_frame size). Kept as-is to preserve tested behaviour;
-    // flagged for review in docs/MAB_FDCAN_PARITY.md.
+    // the mode write uses the full canfd_frame size; the state write uses the classic can_frame size.
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorMode_Message);
     std::memcpy(send_frame_.data, &mm, sizeof(MotorMode_Message));
@@ -436,10 +434,10 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
     {
         const joint_config_t &cfg = joint_configs_[i];
 
-        // Mirror the CubeMars backend's command conditioning: optionally invert pos/vel/torque, then
-        // clamp every commanded quantity to the motor's configured range. fminf/fmaxf is NaN-tolerant
-        // (matching CubemarsCan), so an unset range leaves the value untouched. The ranges come from the
-        // motor_type preset; confirm they are in the units the MAB controller expects.
+        // Optionally invert pos/vel/torque, then clamp every commanded quantity to the motor's
+        // configured range. fminf/fmaxf is NaN-tolerant so an unset range leaves the value
+        // untouched. The ranges come from the motor_type preset;
+        //  confirm they are in the units the MAB controller expects.
         float pos = cfg.invert ? -cmds[i].pos : cmds[i].pos;
         float vel = cfg.invert ? -cmds[i].vel : cmds[i].vel;
         float torque = cfg.invert ? -cmds[i].torque : cmds[i].torque;
@@ -525,7 +523,7 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         states[joint_index].pos = reply.position;
         states[joint_index].vel = reply.velocity;
         states[joint_index].torque = reply.torque;
-        // Undo the command inversion on the reported state, mirroring the CubeMars backend.
+        // Undo the command inversion on the reported state.
         if (joint_configs_[joint_index].invert)
         {
             states[joint_index].pos = -states[joint_index].pos;
