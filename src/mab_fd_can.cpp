@@ -314,6 +314,17 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     }
 }
 
+void MabFdCan::flush_rx_queue()
+{
+    // Discard any frames already sitting in the socket RX queue. During cyclic operation replies
+    // that arrive after a cycle's receive timeout stay queued; a one-shot transaction (e.g. a
+    // set-zero handshake) would otherwise read such a stale reply instead of its own acknowledgement.
+    struct canfd_frame frame;
+    while (::recv(can_socket_fd_, &frame, sizeof(frame), MSG_DONTWAIT) > 0)
+    {
+    }
+}
+
 void MabFdCan::send_zero_frame(const canid_t &can_id, RunZero_Message zm)
 {
     send_frame_.can_id = can_id;
@@ -323,15 +334,20 @@ void MabFdCan::send_zero_frame(const canid_t &can_id, RunZero_Message zm)
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_, 0, sizeof(recv_frame_));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
-    if (nbytes <= 0)
+    // Wait for this motor's acknowledgement, skipping stale replies from other motors that may
+    // still trickle in from the last cyclic cycle.
+    while (true)
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+        memset(&recv_frame_, 0, sizeof(recv_frame_));
+        int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
+        if (nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+        if (recv_frame_.can_id == can_id)
+        {
+            return;
+        }
     }
 }
 
@@ -368,24 +384,35 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
 
     if (set_zero_position_on_enable)
     {
-        // Zeroing takes a few seconds, so temporarily raise the receive timeout.
-        struct timeval tv;
-        tv.tv_sec = 10;
-        tv.tv_usec = 0;
-        if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
-        {
-            throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
-        }
-        RunZero_Message zm;
-        send_zero_frame(joint_configs_[joint_id].can_id, zm);
+        set_zero_position(joint_id);
+    }
+}
 
-        // Restore the configured receive timeout.
-        tv.tv_sec = socket_timeout_sec_;
-        tv.tv_usec = socket_timeout_usec_;
-        if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
-        {
-            throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
-        }
+void MabFdCan::set_zero_position(unsigned int joint_id)
+{
+    if (joint_id >= joint_configs_.size())
+    {
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
+    }
+
+    // Zeroing takes a few seconds, so temporarily raise the receive timeout.
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
+    {
+        throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+    }
+    flush_rx_queue();
+    RunZero_Message zm;
+    send_zero_frame(joint_configs_[joint_id].can_id, zm);
+
+    // Restore the configured receive timeout.
+    tv.tv_sec = socket_timeout_sec_;
+    tv.tv_usec = socket_timeout_usec_;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
+    {
+        throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
 }
 

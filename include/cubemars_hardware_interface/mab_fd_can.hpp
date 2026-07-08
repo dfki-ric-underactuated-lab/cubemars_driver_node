@@ -88,6 +88,7 @@ namespace cubemars
         void end_motor_control_mode(unsigned int joint_id) override;
         void start_motor_control_mode(bool set_zero_position_on_enable) override;
         void end_motor_control_mode() override;
+        void set_zero_position(unsigned int joint_id) override;
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states) override;
 
@@ -108,6 +109,9 @@ namespace cubemars
         // and zero a motor by writing the RunZero register.
         void send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms);
         void send_zero_frame(const canid_t &can_id, RunZero_Message zm);
+        // Discard stale frames from the socket RX queue (replies that arrived after a cyclic
+        // receive timeout), so a one-shot transaction reads its own acknowledgement.
+        void flush_rx_queue();
 
         // recvmsg-based receive that pulls the kernel software RX timestamp (SO_TIMESTAMPNS, CLOCK_REALTIME
         // ns) and the card hardware RX timestamp (SCM_TIMESTAMPING ts[2], raw clock); each 0 if unavailable.

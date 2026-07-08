@@ -52,6 +52,10 @@ namespace cubemars
         virtual void start_motor_control_mode(bool set_zero_position_on_enable) = 0;
         virtual void end_motor_control_mode() = 0;
 
+        // Zero a motor's position at its current pose, without touching its control mode (the motor
+        // stays enabled throughout). Used to calibrate an already-active motor.
+        virtual void set_zero_position(unsigned int joint_id) = 0;
+
         // One control cycle: write every command, then receive and demultiplex every reply into states.
         virtual void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states) = 0;
 

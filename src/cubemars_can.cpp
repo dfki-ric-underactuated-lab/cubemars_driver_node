@@ -579,7 +579,7 @@ void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id, bool
             break;
         case V3:
             send_control_frameV3<1>(joint_configs_[joint_id].can_id, CAN_PACKET_SET_ORIGIN_HERE, {0x1});
-            // the V3 motors will responde once (thats why this call comes back, but then they need time to set the zero position internally)       
+            // the V3 motors will responde once (thats why this call comes back, but then they need time to set the zero position internally)
             break;
         }
     }
@@ -609,6 +609,39 @@ void cubemars::CubemarsCan::start_motor_control_mode(unsigned int joint_id, bool
         {
             throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
         }
+    }
+}
+
+void cubemars::CubemarsCan::set_zero_position(unsigned int joint_id)
+{
+    if (joint_id >= joint_configs_.size())
+    {
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
+    }
+    // Zeroing takes a few seconds, so temporarily raise the receive timeout.
+    struct timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
+    {
+        throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+    }
+    switch (joint_configs_[joint_id].series_type)
+    {
+    case V2:
+        send_control_frameV2(joint_configs_[joint_id].can_id, cubemars::SET_ZERO_POSITION);
+        break;
+    case V3:
+        send_control_frameV3<1>(joint_configs_[joint_id].can_id, CAN_PACKET_SET_ORIGIN_HERE, {0x1});
+        // the V3 motors will responde once (thats why this call comes back, but then they need time to set the zero position internally)
+        break;
+    }
+    // Restore the configured receive timeout.
+    tv.tv_sec = socket_timeout_sec_;
+    tv.tv_usec = socket_timeout_usec_;
+    if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
+    {
+        throw cubemars::can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
 }
 
