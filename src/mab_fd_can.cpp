@@ -276,6 +276,27 @@ void MabFdCan::collect_tx_timestamps(std::vector<joint_state_t> &states)
 
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
 {
+    // Zero out the PID gains and goal position/velocity/torque before (re-)enabling the motor, so it
+    // doesn't briefly chase a stale MotionCommand left over from before the mode/state write below.
+    MotionCommand_Message zero_cmd;
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotionCommand_Message);
+    std::memcpy(send_frame_.data, &zero_cmd, sizeof(MotionCommand_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+    int zero_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (zero_nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+
     // the mode write uses the full canfd_frame size; the state write uses the classic can_frame size.
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorMode_Message);
