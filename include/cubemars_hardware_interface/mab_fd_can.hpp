@@ -31,6 +31,38 @@ namespace cubemars
         float encoder_velocity = 0.f;  // output encoder velocity [rad/s]
     };
 
+    struct Reset_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x088;
+        int8_t register_value = 0x01;
+    };
+
+    struct CanReinit_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x08D;
+        int8_t register_value = 0x01;
+    };
+
+    struct ClearWarnings_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x089;
+        int8_t register_value = 0x01;
+    };
+
+    struct ClearErrors_Message
+    {
+        uint8_t frame_id = 0x40;
+        uint8_t padding = 0x00;
+        int16_t register_id = 0x08A;
+        int8_t register_value = 0x01;
+    };
+
     struct MotorMode_Message
     {
         uint8_t frame_id = 0x40;
@@ -109,6 +141,9 @@ namespace cubemars
         // and zero a motor by writing the RunZero register.
         void send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms);
         void send_zero_frame(const canid_t &can_id, RunZero_Message zm);
+        // Write a single MAB register-protocol message and confirm the motor's acknowledgement
+        // (matching can_id reply); throws can_device_error if none arrives.
+        void send_register_command(const canid_t &can_id, const void *msg, uint8_t msg_len);
         // Discard stale frames from the socket RX queue (replies that arrived after a cyclic
         // receive timeout), so a one-shot transaction reads its own acknowledgement.
         void flush_rx_queue();

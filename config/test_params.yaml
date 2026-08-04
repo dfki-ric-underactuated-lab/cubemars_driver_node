@@ -1,12 +1,12 @@
 cubemars_hardware_node:
   ros__parameters:
-    joints: ["joint_test", "joint_test1","joint_test2","joint_test3","joint_test4", "joint_test5"] #, "joint_test2", "joint_test3","joint_test4","joint_test5","joint_test6", "joint_test7"]
-    default_damping_KD: 1.0
+    joints: ["joint_test1"] # ,"joint_test2","joint_test3","joint_test4"]
     watchdog_frequency: 10
-    frequency: 1000
+    default_damping_KD: 1.0
+    frequency: 500
     can_socket_timeout_sec: 0
     can_socket_timeout_usec: 10000
-    max_can_errors_before_motor_shutdown: 10
+    max_can_errors_before_motor_shutdown: 30
 
     # Communication backend per CAN interface: "cubemars" (classic CAN) or "mab" (CAN FD register
     # protocol). comm_backend_default applies to any interface not listed under can_backends.
@@ -14,8 +14,7 @@ cubemars_hardware_node:
     # brought up in CAN FD mode.
     comm_backend_default: cubemars
     can_backends:
-      can0: cubemars
-      can1: cubemars   # set to "mab" to drive this bus with MAB electronics (once supported)
+      can0: mab
 
     # joint_zero_positions: #Experimentally determined BY FRANEK
     #   - 0.0
@@ -30,25 +29,12 @@ cubemars_hardware_node:
     #joint_zero_positions: [0.,0.,0.,0.,0.,0.]
 
     joint_defintions:
-      joint_test:
-        msg_idx: 0
-        can_interface: "can0"
-        can_id: 1
-        motor_type: "AK80-8v3"
-        tau_c: 0.0
-        tau_s: 0.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.0
-        set_zero_position_on_configure: false
-        invert: false
-        zero_position: 0.0
 
       joint_test1:
-        msg_idx: 1
+        msg_idx: 0
         can_interface: "can0"
-        can_id: 2
-        motor_type: "AK80-8v3"
+        can_id: 11
+        motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
         v_s: 0.5
@@ -59,10 +45,10 @@ cubemars_hardware_node:
         zero_position: 0.0
 
       joint_test2:
-        msg_idx: 2
+        msg_idx: 1
         can_interface: "can0"
-        can_id: 3
-        motor_type: "AK10-9v3"
+        can_id: 12
+        motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
         v_s: 0.5
@@ -73,10 +59,10 @@ cubemars_hardware_node:
         zero_position: 0.0
 
       joint_test3:
-        msg_idx: 3
-        can_interface: "can1"
-        can_id: 4
-        motor_type: "AK10-9v3"
+        msg_idx: 2
+        can_interface: "can0"
+        can_id: 13
+        motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
         v_s: 0.5
@@ -87,136 +73,15 @@ cubemars_hardware_node:
         zero_position: 0.0
 
       joint_test4:
-        msg_idx: 4
-        can_interface: "can1"
-        can_id: 5
-        motor_type: "AK80-8v3"
-        tau_c: 0.0
-        tau_s: 0.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.0
-        set_zero_position_on_configure: false
-        invert: false
-        zero_position: 0.0
-
-      joint_test5:
-        msg_idx: 5
-        can_interface: "can1"
-        can_id: 6
-        motor_type: "AK80-8v3"
-        tau_c: 0.0
-        tau_s: 0.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.0
-        set_zero_position_on_configure: false
-        invert: false
-        zero_position: 0.0
-
-
-      joint_test6:
-        msg_idx: 6
-        can_interface: "can0"
-        can_id: 8
-        motor_type: "AK10-9v3"
-        tau_c: 0.0
-        tau_s: 0.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.0
-        set_zero_position_on_configure: false
-        invert: false
-        zero_position: 0.0
-
-      joint_test7:
-        msg_idx: 7
-        can_interface: "can0"
-        can_id: 10
-        motor_type: "AK80-8v3"
-        tau_c: 0.0
-        tau_s: 0.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.0
-        set_zero_position_on_configure: false
-        invert: false
-        zero_position: 0.0
-
-
-      joint_ll_hip_1:
-        msg_idx: 0
-        can_interface: "can1"
-        can_id: 4
-        motor_type: "AK10-9"
-        tau_c: 0.0
-        tau_s: 0.5
-        v_s: 0.5
-        k: 1.0
-        b: 0.3
-        invert: true
-
-
-      joint_ll_hip_2:
-        msg_idx: 1
-        can_interface: "can1"
-        can_id: 6
-        motor_type: "AK10-9"
-        tau_c: 0.0
-        tau_s: 0.5
-        v_s: 0.5
-        k: 1.0
-        b: 0.3
-
-      joint_ll_knee:
-        msg_idx: 2
-        can_interface: "can1"
-        can_id: 5
-        motor_type: "AK10-9"
-        tau_c: 0.0
-        tau_s: 1.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.3
-        transmission_ratio: 1.5
-
-      joint_rl_hip_1:
         msg_idx: 3
         can_interface: "can0"
-        can_id: 1
-        motor_type: "AK10-9"
+        can_id: 14
+        motor_type: "MAB"
         tau_c: 0.0
-        tau_s: 0.5
+        tau_s: 0.0
         v_s: 0.5
         k: 1.0
-        b: 0.3
-        invert: true
-
-      joint_rl_hip_2:
-        msg_idx: 4
-        can_interface: "can0"
-        can_id: 3
-        motor_type: "AK10-9"
-        tau_c: 0.0
-        tau_s: 0.5
-        v_s: 0.5
-        k: 1.0
-        b: 0.3
-        invert: true
-
-      joint_rl_knee:
-        msg_idx: 5
-        can_interface: "can0"
-        can_id: 2
-        motor_type: "AK10-9"
-        tau_c: 0.0
-        tau_s: 1.0
-        v_s: 0.5
-        k: 1.0
-        b: 0.3
-        invert: true
-        transmission_ratio: 1.5
-
-
-
-
+        b: 0.0
+        set_zero_position_on_configure: false
+        invert: false
+        zero_position: 0.0

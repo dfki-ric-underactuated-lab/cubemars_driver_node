@@ -1,12 +1,14 @@
 #include "cubemars_hardware_interface/mab_fd_can.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cerrno>
 #include <cstring>
 #include <ctime>
 #include <format>
 #include <stdexcept>
+#include <thread>
 
 #include <unistd.h>
 #include <net/if.h>
@@ -274,8 +276,40 @@ void MabFdCan::collect_tx_timestamps(std::vector<joint_state_t> &states)
     }
 }
 
+void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uint8_t msg_len)
+{
+    send_frame_.can_id = can_id;
+    send_frame_.len = msg_len;
+    std::memcpy(send_frame_.data, msg, msg_len);
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+}
+
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
 {
+    // Reset the drive and clear any latched warnings/errors before (re-)configuring it, so a motor
+    // coming out of a fault state (or power-up) starts from a clean slate. Each write is
+    // acknowledged (matching can_id reply) before moving on, same as the mode/state writes below.
+    CanReinit_Message reinit_msg;
+    send_register_command(can_id, &reinit_msg, sizeof(reinit_msg));
+    //std::this_thread::sleep_for(std::chrono::seconds(0.5));
+    ClearWarnings_Message clear_warnings_msg;
+    send_register_command(can_id, &clear_warnings_msg, sizeof(clear_warnings_msg));
+    ClearErrors_Message clear_errors_msg;
+    send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
+
     // Zero out the PID gains and goal position/velocity/torque before (re-)enabling the motor, so it
     // doesn't briefly chase a stale MotionCommand left over from before the mode/state write below.
     MotionCommand_Message zero_cmd;
