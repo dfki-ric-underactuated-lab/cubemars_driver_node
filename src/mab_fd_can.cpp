@@ -297,7 +297,7 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
     }
 }
 
-void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm)
+void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
 {
     // Reset the drive and clear any latched warnings/errors before (re-)configuring it, so a motor
     // coming out of a fault state (or power-up) starts from a clean slate. Each write is
@@ -350,23 +350,23 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm)
         throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
     }
 
-    // send_frame_.can_id = can_id;
-    // send_frame_.len = sizeof(MotorState_Message);
-    // std::memcpy(send_frame_.data, &ms, sizeof(MotorState_Message));
-    // if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
-    // {
-    //     throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    // }
-    // memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
-    // nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    // if (nbytes <= 0)
-    // {
-    //     throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    // }
-    // if (recv_frame_.can_id != can_id)
-    // {
-    //     throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    // }
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotorState_Message);
+    std::memcpy(send_frame_.data, &ms, sizeof(MotorState_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
 }
 
 void MabFdCan::flush_rx_queue()
@@ -424,7 +424,7 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     {
         try
         {
-            send_config_frames(joint_configs_[joint_id].can_id, mm);
+            send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
             success = true;
         }
         catch (const can_device_error &e)
@@ -480,7 +480,7 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     MotorMode_Message mm;
     MotorState_Message sm;
     sm.register_value = 0x40; // disable
-    send_config_frames(joint_configs_[joint_id].can_id, mm);
+    send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
 }
 
 void MabFdCan::start_motor_control_mode(bool set_zero_position_on_enable)
