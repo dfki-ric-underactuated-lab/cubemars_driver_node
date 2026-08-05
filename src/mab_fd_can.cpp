@@ -339,7 +339,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
     memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
-    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (nbytes <= 0)
     {
         throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
@@ -358,7 +358,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
     memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (nbytes <= 0)
     {
         throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
