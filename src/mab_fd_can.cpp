@@ -297,7 +297,7 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
     }
 }
 
-void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
+void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm)
 {
     // Reset the drive and clear any latched warnings/errors before (re-)configuring it, so a motor
     // coming out of a fault state (or power-up) starts from a clean slate. Each write is
@@ -424,7 +424,7 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     {
         try
         {
-            send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
+            send_config_frames(joint_configs_[joint_id].can_id, mm);
             success = true;
         }
         catch (const can_device_error &e)
@@ -480,7 +480,7 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     MotorMode_Message mm;
     MotorState_Message sm;
     sm.register_value = 0x40; // disable
-    send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
+    send_config_frames(joint_configs_[joint_id].can_id, mm);
 }
 
 void MabFdCan::start_motor_control_mode(bool set_zero_position_on_enable)
