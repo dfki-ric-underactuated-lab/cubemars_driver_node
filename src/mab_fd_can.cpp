@@ -505,10 +505,30 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     {
         throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints (highest joint id {})", std::to_string(joint_id), std::to_string(joint_configs_.size())));
     }
+    auto can_id = joint_configs_[joint_id].can_id;
     MotorMode_Message mm;
     MotorState_Message sm;
     sm.register_value = 0x40; // disable
-    send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotorState_Message);
+    std::memcpy(send_frame_.data, &sm, sizeof(MotorState_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
+    // register_value holding the register's current value, so we confirm the write stuck rather
+    // than just confirming *a* reply arrived.
+    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
+    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
 }
 
 void MabFdCan::start_motor_control_mode(bool set_zero_position_on_enable)
