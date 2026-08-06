@@ -1,6 +1,6 @@
 cubemars_hardware_node:
   ros__parameters:
-    joints: ["joint_test1"] # ,"joint_test2","joint_test3","joint_test4"]
+    joints: ["joint_test1","joint_test2","joint_test3","joint_test4"]
     watchdog_frequency: 10
     default_damping_KD: 1.0
     frequency: 500
@@ -16,24 +16,11 @@ cubemars_hardware_node:
     can_backends:
       can0: mab
 
-    # joint_zero_positions: #Experimentally determined BY FRANEK
-    #   - 0.0
-    #   - -0.7
-    #   - -2.2
-    #   - -0.0
-    #   - -0.7
-    #   - -2.2
-
-    #joint_zero_positions: [0.,-0.63,-2.205, 0.,-0.63,-2.205] #  From URDF determined BY HEINER
-
-    #joint_zero_positions: [0.,0.,0.,0.,0.,0.]
-
     joint_defintions:
-
       joint_test1:
         msg_idx: 0
         can_interface: "can0"
-        can_id: 11
+        can_id: 101
         motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
@@ -47,7 +34,7 @@ cubemars_hardware_node:
       joint_test2:
         msg_idx: 1
         can_interface: "can0"
-        can_id: 12
+        can_id: 102
         motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
@@ -61,7 +48,7 @@ cubemars_hardware_node:
       joint_test3:
         msg_idx: 2
         can_interface: "can0"
-        can_id: 13
+        can_id: 103
         motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0
@@ -75,7 +62,7 @@ cubemars_hardware_node:
       joint_test4:
         msg_idx: 3
         can_interface: "can0"
-        can_id: 14
+        can_id: 104
         motor_type: "MAB"
         tau_c: 0.0
         tau_s: 0.0

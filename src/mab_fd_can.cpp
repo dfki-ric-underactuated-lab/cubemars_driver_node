@@ -338,7 +338,10 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
+    // register_value holding the register's current value, so we confirm the write stuck rather
+    // than just confirming *a* reply arrived.
+    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
     int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (nbytes <= 0)
     {
@@ -347,6 +350,12 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     if (recv_frame_.can_id != can_id)
     {
         throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+    MotorState_Message ms_reply;
+    std::memcpy(&ms_reply, recv_frame_.data, sizeof(MotorState_Message));
+    if (ms_reply.register_value != ms.register_value)
+    {
+        throw can_device_error(std::format("Motor state register readback mismatch for can_id {}: expected {}, got {}", can_id, ms.register_value, ms_reply.register_value));
     }
 
     // the mode write uses the full canfd_frame size; the state write uses the classic can_frame size.
@@ -357,7 +366,8 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+    // Same frame_id 0x41 readback semantics as the state write above.
+    memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
     nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (nbytes <= 0)
     {
@@ -366,6 +376,12 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     if (recv_frame_.can_id != can_id)
     {
         throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+    MotorMode_Message mm_reply;
+    std::memcpy(&mm_reply, recv_frame_.data, sizeof(MotorMode_Message));
+    if (mm_reply.register_value != mm.register_value)
+    {
+        throw can_device_error(std::format("Motor mode register readback mismatch for can_id {}: expected {}, got {}", can_id, mm.register_value, mm_reply.register_value));
     }
 }
 
