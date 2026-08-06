@@ -19,6 +19,8 @@
 #include <linux/errqueue.h>
 #include <linux/net_tstamp.h>
 
+#include <rclcpp/rclcpp.hpp>
+
 namespace cubemars
 {
 
@@ -295,6 +297,10 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
     {
         throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
     }
+    int16_t register_id;
+    std::memcpy(&register_id, static_cast<const uint8_t *>(msg) + 2, sizeof(register_id));
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "Register 0x%X write to can_id %u acknowledged (%d bytes received)",
+                 register_id, static_cast<unsigned int>(can_id), nbytes);
 }
 
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
@@ -332,34 +338,6 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     // }
 
     send_frame_.can_id = can_id;
-    send_frame_.len = sizeof(MotorState_Message);
-    std::memcpy(send_frame_.data, &ms, sizeof(MotorState_Message));
-    if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
-    {
-        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
-    // register_value holding the register's current value, so we confirm the write stuck rather
-    // than just confirming *a* reply arrived.
-    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (nbytes <= 0)
-    {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
-    MotorState_Message ms_reply;
-    std::memcpy(&ms_reply, recv_frame_.data, sizeof(MotorState_Message));
-    if (ms_reply.register_value != ms.register_value)
-    {
-        throw can_device_error(std::format("Motor state register readback mismatch for can_id {}: expected {}, got {}", can_id, ms.register_value, ms_reply.register_value));
-    }
-
-    // the mode write uses the full canfd_frame size; the state write uses the classic can_frame size.
-    send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorMode_Message);
     std::memcpy(send_frame_.data, &mm, sizeof(MotorMode_Message));
     if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
@@ -368,7 +346,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     }
     // Same frame_id 0x41 readback semantics as the state write above.
     memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
-    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (nbytes <= 0)
     {
         throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
@@ -379,10 +357,44 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     }
     MotorMode_Message mm_reply;
     std::memcpy(&mm_reply, recv_frame_.data, sizeof(MotorMode_Message));
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorMode write to can_id %u acknowledged (%d bytes received, register_value=%d)",
+                 static_cast<unsigned int>(can_id), nbytes, mm_reply.register_value);
     if (mm_reply.register_value != mm.register_value)
     {
         throw can_device_error(std::format("Motor mode register readback mismatch for can_id {}: expected {}, got {}", can_id, mm.register_value, mm_reply.register_value));
     }
+
+    //////////
+
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotorState_Message);
+    std::memcpy(send_frame_.data, &ms, sizeof(MotorState_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
+    // register_value holding the register's current value, so we confirm the write stuck rather
+    // than just confirming *a* reply arrived.
+    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
+    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+    MotorState_Message ms_reply;
+    std::memcpy(&ms_reply, recv_frame_.data, sizeof(MotorState_Message));
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorState write to can_id %u acknowledged (%d bytes received, register_value=%d)",
+                 static_cast<unsigned int>(can_id), nbytes, ms_reply.register_value);
+    if (ms_reply.register_value != ms.register_value)
+    {   
+        throw can_device_error(std::format("Motor state register readback mismatch for can_id {}: expected {}, got {}", can_id, ms.register_value, ms_reply.register_value));
+    }
+
 }
 
 void MabFdCan::flush_rx_queue()

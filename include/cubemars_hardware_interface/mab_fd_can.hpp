@@ -65,7 +65,7 @@ namespace cubemars
 
     struct MotorMode_Message
     {
-        uint8_t frame_id = 0x41;
+        uint8_t frame_id = 0x42;
         uint8_t padding = 0x00;
         int16_t register_id = 0x140;
         int8_t register_value = 0x04;
@@ -73,7 +73,7 @@ namespace cubemars
 
     struct MotorState_Message
     {
-        uint8_t frame_id = 0x41;
+        uint8_t frame_id = 0x42;
         uint8_t padding = 0x00;
         int16_t register_id = 0x142;
         int16_t register_value = 0x27; // 0x40 to disable
