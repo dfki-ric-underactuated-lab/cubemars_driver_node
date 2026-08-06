@@ -122,7 +122,7 @@ namespace cubemars
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
 
-        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states) override;
+        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 
         const std::string &GetName() override { return can_interface_; }
         canid_t get_can_id(unsigned int joint_index) override { return joint_configs_.at(joint_index).can_id; }

@@ -917,7 +917,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_cmds[i].torque = cmd->effort[joint_params[i].msg_idx];
     }
 
-    if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+    const bool is_active = this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
+    if (is_active)
     {
         // friction model
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
@@ -951,7 +952,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_communication_mutex_.lock_shared();
     try
     {
-        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states);
+        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states, is_active);
         can_communication_mutex_.unlock_shared();
     }
     catch (const std::exception &e)

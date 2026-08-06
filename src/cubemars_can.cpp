@@ -211,7 +211,7 @@ void cubemars::CubemarsCan::send_control_frameV2(const canid_t &can_id, const st
     }
 }
 
-void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states)
+void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool /*is_active*/)
 {
     if (cmds.size() != states.size() && cmds.size() != joint_configs_.size())
     {

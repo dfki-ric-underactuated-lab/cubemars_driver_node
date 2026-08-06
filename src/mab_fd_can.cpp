@@ -308,13 +308,13 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     // Reset the drive and clear any latched warnings/errors before (re-)configuring it, so a motor
     // coming out of a fault state (or power-up) starts from a clean slate. Each write is
     // acknowledged (matching can_id reply) before moving on, same as the mode/state writes below.
-    CanReinit_Message reinit_msg;
-    send_register_command(can_id, &reinit_msg, sizeof(reinit_msg));
-    //std::this_thread::sleep_for(std::chrono::seconds(0.1));
-    ClearWarnings_Message clear_warnings_msg;
-    send_register_command(can_id, &clear_warnings_msg, sizeof(clear_warnings_msg));
-    ClearErrors_Message clear_errors_msg;
-    send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
+    // CanReinit_Message reinit_msg;
+    // send_register_command(can_id, &reinit_msg, sizeof(reinit_msg));
+    // //std::this_thread::sleep_for(std::chrono::seconds(0.1));
+    // ClearWarnings_Message clear_warnings_msg;
+    // send_register_command(can_id, &clear_warnings_msg, sizeof(clear_warnings_msg));
+    // ClearErrors_Message clear_errors_msg;
+    // send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
 
     // Zero out the PID gains and goal position/velocity/torque before (re-)enabling the motor, so it
     // doesn't briefly chase a stale MotionCommand left over from before the mode/state write below.
@@ -527,7 +527,7 @@ void MabFdCan::end_motor_control_mode()
     }
 }
 
-void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states)
+void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active)
 {
     if (cmds.size() != states.size() && cmds.size() != joint_configs_.size())
     {
@@ -556,14 +556,18 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         torque = fminf(fmaxf(static_cast<float>(cfg.I_MIN), torque), static_cast<float>(cfg.I_MAX));
         const float kp = fminf(fmaxf(static_cast<float>(cfg.KP_MIN), cmds[i].kp), static_cast<float>(cfg.KP_MAX));
         const float kd = fminf(fmaxf(static_cast<float>(cfg.KD_MIN), cmds[i].kd), static_cast<float>(cfg.KD_MAX));
-
+        
+        // Default-constructed desired_* fields are already 0.f, so when inactive we simply leave
+        // them unset and write zero register values instead of the actual command.
         MotionCommand_Message cmd;
-        cmd.desired_pk = kp;
-        cmd.desired_dk = kd;
-        cmd.desired_position = pos;
-        cmd.desired_velocity = vel;
-        cmd.desired_torque = torque;
-
+        if (is_active)
+        {
+            cmd.desired_pk = kp;
+            cmd.desired_dk = kd;
+            cmd.desired_position = pos;
+            cmd.desired_velocity = vel;
+            cmd.desired_torque = torque;
+        }
         send_frame_.can_id = joint_configs_[i].can_id;
         send_frame_.len = sizeof(MotionCommand_Message);
         send_frame_.flags = CANFD_BRS;
