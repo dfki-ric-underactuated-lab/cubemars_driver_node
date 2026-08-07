@@ -454,8 +454,8 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
     zero_kp_m.register_value = 0x00;
     WriteSingleRegister_Message<float> zero_kd_m;
-    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kp_m.register_value = 0x00;
+    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
+    zero_kd_m.register_value = 0x00;
 
     while (!success && trial++ < max_initial_connection_trials_)
     {
@@ -528,8 +528,8 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
     zero_kp_m.register_value = 0x00;
     WriteSingleRegister_Message<float> zero_kd_m;
-    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kp_m.register_value = 0x00;
+    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
+    zero_kd_m.register_value = 0x00;
     
     try {
         send_register_command(can_id, &mm, sizeof(mm));
