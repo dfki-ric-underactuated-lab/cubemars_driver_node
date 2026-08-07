@@ -450,10 +450,10 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     mm.register_value = MOTION_MODE_IMPEDANCE;
     MotorState_Message sm;
     sm.register_value = MOTOR_STATE_ENABLE;
-    WriteSingleRegister_Message<f32_t> zero_kp_m;
+    WriteSingleRegister_Message<float> zero_kp_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP
     zero_kp_m.value = 0x00;
-    WriteSingleRegister_Message<f32_t> zero_kd_m;
+    WriteSingleRegister_Message<float> zero_kd_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD
     zero_kp_m.value = 0x00;
 
@@ -524,17 +524,17 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     mm.register_value = MOTION_MODE_IDLE;
     MotorState_Message sm;
     sm.register_value = MOTOR_STATE_DISABLE; // disable
-    WriteSingleRegister_Message<f32_t> zero_kp_m;
+    WriteSingleRegister_Message<float> zero_kp_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP
     zero_kp_m.value = 0x00;
-    WriteSingleRegister_Message<f32_t> zero_kd_m;
+    WriteSingleRegister_Message<float> zero_kd_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD
     zero_kp_m.value = 0x00;
 
-    send_register_command(can_id, mm, sizeof(mm));
-    send_register_command(can_id, zero_kp_m, sizeof(zero_kp_m));
-    send_register_command(can_id, zero_kd_m, sizeof(zero_kd_m));
-    send_register_command(can_id, sm, sizeof(sm));
+    send_register_command(can_id, &mm, sizeof(mm));
+    send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
+    send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));
+    send_register_command(can_id, &sm, sizeof(sm));
     
 }
 
