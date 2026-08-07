@@ -504,6 +504,9 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     RunZero_Message zm;
     send_zero_frame(joint_configs_[joint_id].can_id, zm);
 
+    RunSaveCommand_Message sm;
+    send_zero_frame(joint_configs_[joint_id].can_id, sm);
+
     // Restore the configured receive timeout.
     tv.tv_sec = socket_timeout_sec_;
     tv.tv_usec = socket_timeout_usec_;
