@@ -48,7 +48,6 @@ namespace cubemars
     static constexpr int8_t MOTOR_STATE_ENABLE = 0x27;
     
 
-    motionModeCommand
 
 
     #pragma pack(push, 1)
