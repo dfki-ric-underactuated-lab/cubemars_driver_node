@@ -123,7 +123,7 @@ namespace cubemars
     template <typename T>
     struct WriteSingleRegister_Message
     {
-        uint8_t frame_id = 0x00;
+        uint8_t frame_id = WRITE_REGISTER;
         uint8_t passing = 0x00;
         int16_t register_id = 0x00;
         T register_value = 0x00;
