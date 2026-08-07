@@ -504,13 +504,13 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     RunZero_Message zm;
     send_zero_frame(joint_configs_[joint_id].can_id, zm);
 
-    RunSaveCommand_Message sm;
+    /*RunSaveCommand_Message sm;
     try {
         send_register_command(joint_configs_[joint_id].can_id, &sm, sizeof(sm));
     }catch (const can_device_error &e)
     {
         throw can_interface_error(std::format("Failed to save motor config {}", e.what()));
-    } 
+    }*/
 
     // Restore the configured receive timeout.
     tv.tv_sec = socket_timeout_sec_;

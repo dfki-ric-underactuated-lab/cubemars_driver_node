@@ -122,7 +122,7 @@ namespace cubemars
 
     struct RunSaveCommand_Message
     {
-        uint8_t frame_id = WRITE_REGISTER;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
         int16_t register_id = 0x80;
         int8_t register_value = 1;
