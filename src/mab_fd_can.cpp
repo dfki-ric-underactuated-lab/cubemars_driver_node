@@ -526,11 +526,17 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     sm.register_value = MOTOR_STATE_DISABLE; // disable
     WriteSingleRegister_Message<float> zero_kp_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
-    zero_kp_m.register_value = 0x00;
+    zero_kp_m.register_value = 0.f;
     WriteSingleRegister_Message<float> zero_kd_m;
     zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kd_m.register_value = 0x00;
+    zero_kd_m.register_value = 0.0f;
     
+    try {
+        send_register_command(can_id, &sm, sizeof(sm));
+    }catch (const can_device_error &e)
+    {
+        throw can_interface_error(std::format("Failed to set MOTOR_STATE_DISABLE {}", e.what()));
+    } 
     try {
         send_register_command(can_id, &mm, sizeof(mm));
     }catch (const can_device_error &e)
@@ -549,12 +555,7 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     {
         throw can_interface_error(std::format("Failed to set REGISTER_ID_MOTOR_IMP_PID_KD {}", e.what()));
     }
-    try {
-        send_register_command(can_id, &sm, sizeof(sm));
-    }catch (const can_device_error &e)
-    {
-        throw can_interface_error(std::format("Failed to set MOTOR_STATE_DISABLE {}", e.what()));
-    }      
+     
    
 }
 
