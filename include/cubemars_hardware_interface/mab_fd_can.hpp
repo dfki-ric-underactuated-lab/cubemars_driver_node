@@ -127,7 +127,7 @@ namespace cubemars
         uint8_t passing = 0x00;
         int16_t register_id = 0x00;
         T register_value = 0x00;
-    }
+    };
 
     struct MotionCommand_Message
     {
