@@ -447,12 +447,26 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     bool success = false;
     std::string error_msg = "";
     MotorMode_Message mm;
+    mm.register_value = MOTION_MODE_IMPEDANCE;
     MotorState_Message sm;
+    sm.register_value = MOTOR_STATE_ENABLE;
+    WriteSingleRegister_Message<f32_t> zero_kp_m;
+    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP
+    zero_kp_m.value = 0x00;
+    WriteSingleRegister_Message<f32_t> zero_kd_m;
+    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD
+    zero_kp_m.value = 0x00;
+
     while (!success && trial++ < max_initial_connection_trials_)
     {
         try
         {
-            send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
+            //send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
+            send_register_command(joint_configs_[joint_id].can_id, &zero_kp_m, sizeof(zero_kp_m));
+            send_register_command(joint_configs_[joint_id].can_id, &zero_kd_m, sizeof(zero_kd_m));
+            send_register_command(joint_configs_[joint_id].can_id, &mm, sizeof(mm));
+            send_register_command(joint_configs_[joint_id].can_id, &sm, sizeof(sm));
+
             success = true;
         }
         catch (const can_device_error &e)
@@ -507,28 +521,21 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     }
     auto can_id = joint_configs_[joint_id].can_id;
     MotorMode_Message mm;
+    mm.register_value = MOTION_MODE_IDLE;
     MotorState_Message sm;
-    sm.register_value = 0x40; // disable
-    send_frame_.can_id = can_id;
-    send_frame_.len = sizeof(MotorState_Message);
-    std::memcpy(send_frame_.data, &sm, sizeof(MotorState_Message));
-    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
-    {
-        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
-    // register_value holding the register's current value, so we confirm the write stuck rather
-    // than just confirming *a* reply arrived.
-    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (nbytes <= 0)
-    {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+    sm.register_value = MOTOR_STATE_DISABLE; // disable
+    WriteSingleRegister_Message<f32_t> zero_kp_m;
+    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP
+    zero_kp_m.value = 0x00;
+    WriteSingleRegister_Message<f32_t> zero_kd_m;
+    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD
+    zero_kp_m.value = 0x00;
+
+    send_register_command(can_id, mm, sizeof(mm));
+    send_register_command(can_id, zero_kp_m, sizeof(zero_kp_m));
+    send_register_command(can_id, zero_kd_m, sizeof(zero_kd_m));
+    send_register_command(can_id, sm, sizeof(sm));
+    
 }
 
 void MabFdCan::start_motor_control_mode(bool set_zero_position_on_enable)

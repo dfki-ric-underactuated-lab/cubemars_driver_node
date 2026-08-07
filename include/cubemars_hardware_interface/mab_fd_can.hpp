@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <stdfloat>
 
 #include <linux/can.h>
 
@@ -17,6 +18,39 @@ namespace cubemars
     // with a fixed Legacy_Response. The structs are byte-packed because they are memcpy'd straight
     // to/from the CAN FD frame data. They live in the MAB backend (not the shared cubemars_com.hpp)
     // because they are MAB-implementation detail.
+
+    // CMD_IDS
+    static constexpr uint8_t WRITE_REGISTER_LEGACY = 0x40;
+    static constexpr uint8_t WRITE_REGISTER = 0x42;
+
+    // REGISTER_IDS
+    static constexpr int16_t REGISTER_ID_RUN_RESET = 0x088;
+    static constexpr int16_t REGISTER_ID_RUN_CAN_RE_INIT = 0x08D;
+    static constexpr int16_t REGISTER_ID_RUN_CLEAR_WARNINGS = 0x089;
+    static constexpr int16_t REGISTER_ID_RUN_CLEAR_ERRORS = 0x08A;
+    static constexpr int16_t REGISTER_ID_MOTION_MODE_COMMAND = 0x140;
+    static constexpr int16_t REGISTER_ID_STATE = 0x142;
+    static constexpr int16_t REGISTER_ID_RUN_ZERO = 0x08C;
+    
+    static constexpr int16_t REGISTER_ID_MOTOR_IMP_PID_KP = 0x050;
+    static constexpr int16_t REGISTER_ID_MOTOR_IMP_PID_KD = 0x051;
+    static constexpr int16_t REGISTER_ID_TARGET_POSITION = 0x150;
+    static constexpr int16_t REGISTER_ID_TARGET_VELOCITY = 0x151;
+    static constexpr int16_t REGISTER_ID_TARGET_TORQUE = 0x152;
+    
+
+    // Motion modes
+    static constexpr int8_t MOTION_MODE_IDLE = 0x00;
+    static constexpr int8_t MOTION_MODE_IMPEDANCE = 0x04;
+
+    // Motor state
+    static constexpr int8_t MOTOR_STATE_DISABLE = 0x40;
+    static constexpr int8_t MOTOR_STATE_ENABLE = 0x27;
+    
+
+    motionModeCommand
+
+
     #pragma pack(push, 1)
     struct Legacy_Response
     {
@@ -33,73 +67,82 @@ namespace cubemars
 
     struct Reset_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x088;
+        int16_t register_id = REGISTER_ID_RUN_RESET;
         int8_t register_value = 0x01;
     };
 
     struct CanReinit_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x08D;
+        int16_t register_id = REGISTER_ID_RUN_CAN_RE_INIT;
         int8_t register_value = 0x01;
     };
 
     struct ClearWarnings_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x089;
+        int16_t register_id = REGISTER_ID_RUN_CLEAR_WARNINGS;
         int8_t register_value = 0x01;
     };
 
     struct ClearErrors_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x08A;
+        int16_t register_id = REGISTER_ID_RUN_CLEAR_ERRORS;
         int8_t register_value = 0x01;
     };
 
     struct MotorMode_Message
     {
-        uint8_t frame_id = 0x42;
+        uint8_t frame_id = WRITE_REGISTER;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x140;
-        int8_t register_value = 0x04;
+        int16_t register_id = REGISTER_ID_MOTION_MODE_COMMAND;
+        int8_t register_value = MOTION_MODE_IDLE;
     };
 
     struct MotorState_Message
     {
-        uint8_t frame_id = 0x42;
+        uint8_t frame_id = WRITE_REGISTER;
         uint8_t padding = 0x00;
-        int16_t register_id = 0x142;
-        int16_t register_value = 0x27; // 0x40 to disable
+        int16_t register_id = REGISTER_ID_STATE;
+        int16_t register_value = MOTOR_STATE_DISABLE;
     };
 
     struct RunZero_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
         int16_t register_id = 0x8C;
         int8_t register_value = 1;
     };
 
+    template <typename T>
+    struct WriteSingleRegister_Message
+    {
+        uint8_t frame_id = 0x00;
+        uint8_t passing = 0x00;
+        int16_t register_id = 0x00;
+        T register_value = 0x00;
+    }
+
     struct MotionCommand_Message
     {
-        uint8_t frame_id = 0x40;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
-        int16_t pk_register_id = 0x50;
+        int16_t pk_register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
         float desired_pk = 0.f;
-        int16_t dk_register_id = 0x51;
+        int16_t dk_register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
         float desired_dk = 0.f;
-        int16_t position_register_id = 0x150;
+        int16_t position_register_id = REGISTER_ID_TARGET_POSITION;
         float desired_position = 0.f;
-        int16_t velocity_register_id = 0x151;
+        int16_t velocity_register_id = REGISTER_ID_TARGET_VELOCITY;
         float desired_velocity = 0.f;
-        int16_t torque_register_id = 0x152;
+        int16_t torque_register_id = REGISTER_ID_TARGET_TORQUE;
         float desired_torque = 0.f;
     };
     #pragma pack(pop)
