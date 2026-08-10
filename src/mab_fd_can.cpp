@@ -500,17 +500,34 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     {
         throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
     }
-    flush_rx_queue();
-    RunZero_Message zm;
-    send_zero_frame(joint_configs_[joint_id].can_id, zm);
-
-    /*RunSaveCommand_Message sm;
-    try {
-        send_register_command(joint_configs_[joint_id].can_id, &sm, sizeof(sm));
-    }catch (const can_device_error &e)
+    try
     {
-        throw can_interface_error(std::format("Failed to save motor config {}", e.what()));
-    }*/
+        flush_rx_queue();
+        RunZero_Message zm;
+        send_zero_frame(joint_configs_[joint_id].can_id, zm);
+
+        // Persist the new zero position (and any other pending register changes) to flash, so it
+        // survives a power cycle. Mirrors save_motors.py's runSaveCmd write: send_register_command
+        // already checks that a reply arrived and that it came from the expected can_id, throwing
+        // can_device_error otherwise, so a lost/misdirected ack surfaces as a real failure here.
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+        if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
+        {
+            throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+        }
+        RunSaveCommand_Message sm;
+        send_register_command(joint_configs_[joint_id].can_id, &sm, sizeof(sm));
+    }
+    catch (...)
+    {
+        // Restore the configured receive timeout before propagating, so a failed zero/save doesn't
+        // leave the cyclic comm thread blocking on this one-shot transaction's longer timeout.
+        tv.tv_sec = socket_timeout_sec_;
+        tv.tv_usec = socket_timeout_usec_;
+        setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval));
+        throw;
+    }
 
     // Restore the configured receive timeout.
     tv.tv_sec = socket_timeout_sec_;
