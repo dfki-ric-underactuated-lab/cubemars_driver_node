@@ -316,26 +316,16 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     // ClearErrors_Message clear_errors_msg;
     // send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
 
-    // Zero out the PID gains and goal position/velocity/torque before (re-)enabling the motor, so it
-    // doesn't briefly chase a stale MotionCommand left over from before the mode/state write below.
-    // MotionCommand_Message zero_cmd;
-    // send_frame_.can_id = can_id;
-    // send_frame_.len = sizeof(MotionCommand_Message);
-    // std::memcpy(send_frame_.data, &zero_cmd, sizeof(MotionCommand_Message));
-    // if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
-    // {
-    //     throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    // }
-    // memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
-    // int zero_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    // if (zero_nbytes <= 0)
-    // {
-    //     throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    // }
-    // if (recv_frame_.can_id != can_id)
-    // {
-    //     throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    // }
+    // Zero out the PID gains before (re-)configuring the motion mode/state below, so the motor
+    // doesn't briefly chase a stale impedance target left over from before this write.
+    WriteSingleRegister_Message<float> zero_kp_m;
+    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
+    zero_kp_m.register_value = 0.f;
+    send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
+    WriteSingleRegister_Message<float> zero_kd_m;
+    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
+    zero_kd_m.register_value = 0.f;
+    send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));
 
     // Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
     // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
@@ -482,23 +472,12 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     mm.register_value = MOTION_MODE_IMPEDANCE;
     MotorState_Message sm;
     sm.register_value = MOTOR_STATE_ENABLE;
-    WriteSingleRegister_Message<float> zero_kp_m;
-    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
-    zero_kp_m.register_value = 0x00;
-    WriteSingleRegister_Message<float> zero_kd_m;
-    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kd_m.register_value = 0x00;
 
     while (!success && trial++ < max_initial_connection_trials_)
     {
         try
         {
-            //send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
-            send_register_command(joint_configs_[joint_id].can_id, &zero_kp_m, sizeof(zero_kp_m));
-            send_register_command(joint_configs_[joint_id].can_id, &zero_kd_m, sizeof(zero_kd_m));
-            send_register_command(joint_configs_[joint_id].can_id, &mm, sizeof(mm));
-            send_register_command(joint_configs_[joint_id].can_id, &sm, sizeof(sm));
-
+            send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
             success = true;
         }
         catch (const can_device_error &e)
@@ -576,44 +555,11 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
     {
         throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints (highest joint id {})", std::to_string(joint_id), std::to_string(joint_configs_.size())));
     }
-    auto can_id = joint_configs_[joint_id].can_id;
     MotorMode_Message mm;
     mm.register_value = MOTION_MODE_IDLE;
     MotorState_Message sm;
     sm.register_value = MOTOR_STATE_DISABLE; // disable
-    WriteSingleRegister_Message<float> zero_kp_m;
-    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
-    zero_kp_m.register_value = 0.f;
-    WriteSingleRegister_Message<float> zero_kd_m;
-    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kd_m.register_value = 0.0f;
-    
-    try {
-        send_register_command(can_id, &sm, sizeof(sm));
-    }catch (const can_device_error &e)
-    {
-        throw can_interface_error(std::format("Failed to set MOTOR_STATE_DISABLE {}", e.what()));
-    } 
-    try {
-        send_register_command(can_id, &mm, sizeof(mm));
-    }catch (const can_device_error &e)
-    {
-        throw can_interface_error(std::format("Failed to set MOTION_MODE_IDLE {}", e.what()));
-    }
-    try {
-        send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
-    }catch (const can_device_error &e)
-    {
-        throw can_interface_error(std::format("Failed to set REGISTER_ID_MOTOR_IMP_PID_KP {}", e.what()));
-    }
-    try {
-        send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));
-    }catch (const can_device_error &e)
-    {
-        throw can_interface_error(std::format("Failed to set REGISTER_ID_MOTOR_IMP_PID_KD {}", e.what()));
-    }
-     
-   
+    send_config_frames(joint_configs_[joint_id].can_id, mm, sm);
 }
 
 void MabFdCan::start_motor_control_mode(bool set_zero_position_on_enable)
