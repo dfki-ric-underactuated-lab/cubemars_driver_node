@@ -337,6 +337,38 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     //     throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
     // }
 
+    // Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
+    // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
+    QuickStatus_Message qs_req;
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(QuickStatus_Message);
+    std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
+    int qs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (qs_nbytes <= 0)
+    {
+        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    if (recv_frame_.can_id != can_id)
+    {
+        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
+    }
+    QuickStatus_Message qs_reply;
+    std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
+    const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "QuickStatus read from can_id %u: 0x%04X",
+                 static_cast<unsigned int>(can_id), quick_status);
+    const ErrorCode qs_fault = mab_quick_status_to_error(quick_status);
+    if (qs_fault != ErrorCode::NO_FAULT)
+    {
+        throw can_device_error(std::format("Motor with can_id {} reports {} before activation (Quick Status 0x{:04X})",
+                                            can_id, errorFlagToString(qs_fault), quick_status));
+    }
+
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorMode_Message);
     std::memcpy(send_frame_.data, &mm, sizeof(MotorMode_Message));

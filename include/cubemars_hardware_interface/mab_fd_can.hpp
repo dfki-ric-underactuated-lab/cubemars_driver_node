@@ -21,6 +21,7 @@ namespace cubemars
 
     // CMD_IDS
     static constexpr uint8_t WRITE_REGISTER_LEGACY = 0x40;
+    static constexpr uint8_t READ_REGISTER = 0x41;
     static constexpr uint8_t WRITE_REGISTER = 0x42;
 
     // REGISTER_IDS
@@ -31,6 +32,7 @@ namespace cubemars
     static constexpr int16_t REGISTER_ID_MOTION_MODE_COMMAND = 0x140;
     static constexpr int16_t REGISTER_ID_STATE = 0x142;
     static constexpr int16_t REGISTER_ID_RUN_ZERO = 0x08C;
+    static constexpr int16_t REGISTER_ID_QUICK_STATUS = 0x805;
     
     static constexpr int16_t REGISTER_ID_MOTOR_IMP_PID_KP = 0x050;
     static constexpr int16_t REGISTER_ID_MOTOR_IMP_PID_KD = 0x051;
@@ -62,6 +64,14 @@ namespace cubemars
         float torque = 0.f;            // motor torque [Nm]
         float encoder_position = 0.f;  // output encoder position [rad]
         float encoder_velocity = 0.f;  // output encoder velocity [rad/s]
+    };
+
+    struct QuickStatus_Message
+    {
+        uint8_t frame_id = READ_REGISTER;
+        uint8_t padding = 0x00;
+        int16_t register_id = REGISTER_ID_QUICK_STATUS;
+        int16_t register_value = 0x0000;
     };
 
     struct Reset_Message
