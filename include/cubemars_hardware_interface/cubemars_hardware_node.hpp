@@ -183,6 +183,22 @@ private:
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr set_all_motors_origin_here_srv_;
     rclcpp::Service<robot_control_msgs::srv::SetMotorOriginHere>::SharedPtr set_motor_origin_here_srv_;
 
+    // Lightweight per-joint identity/addressing info for the origin-here services, populated in
+    // on_configure() but (unlike everything else) NOT cleared in on_cleanup(): MAB motors only
+    // persist a set-zero to flash while the node is UNCONFIGURED, at which point can_interfaces_
+    // has already been torn down, so the service opens its own one-shot connection from this.
+    struct OriginHereJointInfo
+    {
+        std::string name;
+        unsigned int msg_idx;
+        std::string can_interface_name;
+        std::string backend; // "mab" or "cubemars"
+        canid_t can_id;
+        cubemars::SERIES_TYPE series_type;
+        bool reply_on_own_id;
+    };
+    std::vector<OriginHereJointInfo> origin_here_joint_info_;
+
     double default_damping_KD_;
     double friction_compensation_sign_steepness_;
     unsigned int num_joints_;
@@ -287,4 +303,12 @@ public:
                                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void set_motor_origin_here_callback(const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,
                                         std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Response> response);
+    // Whether the node's current lifecycle state is the one `info`'s backend requires for
+    // zero+save to actually take effect (MAB: UNCONFIGURED; CubeMars: INACTIVE). On failure,
+    // required_state_out is set to a human-readable label of what was required.
+    bool origin_here_state_ok(const OriginHereJointInfo &info, std::string &required_state_out) const;
+    // Zero (and flash-save) a single MAB joint while UNCONFIGURED, via a throwaway MabFdCan
+    // connection built straight from `info` and the node's parameters (can_interfaces_ no longer
+    // exists in this state). Throws can_device_error/can_interface_error on failure.
+    void zero_mab_joint_standalone(const OriginHereJointInfo &info);
 };
