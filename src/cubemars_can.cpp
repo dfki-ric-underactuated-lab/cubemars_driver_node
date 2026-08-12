@@ -446,6 +446,7 @@ void cubemars::CubemarsCan::send_and_receive(const std::vector<joint_cmd_t> &cmd
 
         // This driver has no output-side encoder to report.
         states[joint_index].output_encoder_pos = std::nanf("");
+        states[joint_index].output_encoder_vel = std::nanf("");
         if (joint_configs_[joint_index].invert)
         {
             states[joint_index].pos = -states[joint_index].pos;

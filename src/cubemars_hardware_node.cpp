@@ -93,6 +93,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         output_encoder_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_output_encoder_positions_debug", QOS_BEST_EFFORT_NO_DEPTH);
+        output_encoder_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_output_encoder_velocities_debug", QOS_BEST_EFFORT_NO_DEPTH);
         controller_latency_pub_ = this->create_publisher<std_msgs::msg::Float32>("controller_latency_us", QOS_BEST_EFFORT_NO_DEPTH);
         if (publish_ros2_joint_state_)
         {
@@ -213,6 +214,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         output_encoder_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        output_encoder_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
         if (ros2_joint_state_pub_)
         {
@@ -272,7 +274,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             unsigned int pos_median_filter_size = static_cast<unsigned int>(pos_median_filter_size_raw);
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
-            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, std::nanf(""), cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0, 0, 0});
+            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, std::nanf(""), std::nanf(""), cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0, 0, 0});
             joint_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_min").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_max").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double(),
@@ -522,6 +524,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     unfiltered_position_msg_.data.clear();
     output_encoder_position_pub_.reset();
     output_encoder_position_msg_.data.clear();
+    output_encoder_velocity_pub_.reset();
+    output_encoder_velocity_msg_.data.clear();
     last_can_cycle_times_.clear();
     joint_state_msg_mutex_.unlock();
     can_communication_mutex_.unlock();
@@ -634,6 +638,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         unfiltered_velocity_pub_.reset();
         unfiltered_position_pub_.reset();
         output_encoder_position_pub_.reset();
+        output_encoder_velocity_pub_.reset();
         can_interfaces_names_.clear();
         stop_all_comm_threads(); // join any comm threads started before configure() failed
         comm_threads_.clear();
@@ -669,6 +674,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         unfiltered_velocity_msg_.data.clear();
         unfiltered_position_msg_.data.clear();
         output_encoder_position_msg_.data.clear();
+        output_encoder_velocity_msg_.data.clear();
         // origin_here_joint_info_ may hold a partial set built before this failed configure()
         // attempt; drop it rather than leave stale/incomplete entries around. The services
         // themselves are NOT reset here: they must stay callable in UNCONFIGURED.
@@ -767,6 +773,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
     unfiltered_position_msg_to_pub_ = unfiltered_position_msg_;
     output_encoder_position_msg_to_pub_ = output_encoder_position_msg_;
+    output_encoder_velocity_msg_to_pub_ = output_encoder_velocity_msg_;
     // Stamp with the oldest successful reply currently in the message: a conservative
     // freshness bound (every joint value is no older than `stamp`). The kernel RX timestamp
     // (SO_TIMESTAMPNS, CLOCK_REALTIME ns) shares the epoch with ROS SYSTEM_TIME.
@@ -812,6 +819,7 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     unfiltered_velocity_pub_->publish(unfiltered_velocity_msg_to_pub_);
     unfiltered_position_pub_->publish(unfiltered_position_msg_to_pub_);
     output_encoder_position_pub_->publish(output_encoder_position_msg_to_pub_);
+    output_encoder_velocity_pub_->publish(output_encoder_velocity_msg_to_pub_);
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_msg_.position = joint_state_msg_to_pub_.position;
@@ -1122,12 +1130,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             // transmission_ratio scaling. NaN when the driver/joint has no output encoder.
             output_encoder_position_msg_.data[joint_params[i].msg_idx] =
                 joint_states[i].output_encoder_pos + joint_params[i].zero_position;
+            output_encoder_velocity_msg_.data[joint_params[i].msg_idx] = joint_states[i].output_encoder_vel;
         }
         else
         {
             unfiltered_velocity_msg_.data[joint_params[i].msg_idx] = std::nanf("");
             unfiltered_position_msg_.data[joint_params[i].msg_idx] = std::nanf("");
             output_encoder_position_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+            output_encoder_velocity_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
     }
 

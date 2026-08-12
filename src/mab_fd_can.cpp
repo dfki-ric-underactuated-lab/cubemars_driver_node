@@ -689,6 +689,7 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         states[joint_index].vel = reply.velocity;
         states[joint_index].torque = reply.torque;
         states[joint_index].output_encoder_pos = reply.encoder_position;
+        states[joint_index].output_encoder_vel = reply.encoder_velocity;
         // Undo the command inversion on the reported state.
         if (joint_configs_[joint_index].invert)
         {
@@ -696,6 +697,7 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
             states[joint_index].vel = -states[joint_index].vel;
             states[joint_index].torque = -states[joint_index].torque;
             states[joint_index].output_encoder_pos = -states[joint_index].output_encoder_pos;
+            states[joint_index].output_encoder_vel = -states[joint_index].output_encoder_vel;
         }
         states[joint_index].temp = static_cast<float>(reply.temperature);
         // Decode the MAB Quick Status into a fault. Only the error-category bits count: the
