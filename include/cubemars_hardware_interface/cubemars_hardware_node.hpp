@@ -122,6 +122,8 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_intercycle_gap_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
+    // Debug-only: raw output-side encoder position, NaN for joints/drivers without one (see joint_state_t::output_encoder_pos).
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr output_encoder_position_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     // Round-trip controller latency: now - stamp of the incoming joint_cmd, in milliseconds.
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr controller_latency_pub_;
@@ -159,6 +161,7 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
@@ -174,6 +177,7 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_to_pub_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;

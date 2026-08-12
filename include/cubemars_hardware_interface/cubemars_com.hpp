@@ -147,6 +147,7 @@ namespace cubemars
         float vel;
         float torque;
         float temp;
+        float output_encoder_pos;       // output-side encoder position [rad], NaN where unsupported (e.g. non-MAB drivers)
         ErrorCode device_status;
         ComStatus communication_status;
         int com_errno;
