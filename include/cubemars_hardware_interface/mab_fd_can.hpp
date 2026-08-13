@@ -108,7 +108,7 @@ namespace cubemars
 
     struct MotorMode_Message
     {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
+        uint8_t frame_id = WRITE_REGISTER;
         uint8_t padding = 0x00;
         int16_t register_id = REGISTER_ID_MOTION_MODE_COMMAND;
         int8_t register_value = MOTION_MODE_IMPEDANCE;
@@ -116,7 +116,7 @@ namespace cubemars
 
     struct MotorState_Message
     {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
+        uint8_t frame_id = WRITE_REGISTER;
         uint8_t padding = 0x00;
         int16_t register_id = REGISTER_ID_STATE;
         int16_t register_value = MOTOR_STATE_DISABLE;
