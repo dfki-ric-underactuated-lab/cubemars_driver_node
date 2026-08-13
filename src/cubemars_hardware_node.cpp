@@ -1,5 +1,46 @@
 #include "cubemars_hardware_interface/cubemars_hardware_node.hpp"
 #include <linux/can/error.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace
+{
+    // Statically fixed: every MAB/CubeMars CAN interface this node drives runs at the same
+    // arbitration/data bitrate and queue depth, so these aren't exposed as parameters.
+    constexpr const char *CAN_BITRATE = "1000000";
+    constexpr const char *CAN_DBITRATE = "2000000";
+    constexpr const char *CAN_TXQUEUELEN = "1000";
+
+    // Run `ip` with the given argv (excluding argv[0]) via fork+execvp, bypassing the shell so an
+    // interface name never risks command injection. Returns true on exit code 0.
+    bool run_ip_command(const std::vector<std::string> &args)
+    {
+        std::vector<char *> argv;
+        argv.push_back(const_cast<char *>("ip"));
+        for (const auto &arg : args)
+        {
+            argv.push_back(const_cast<char *>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        pid_t pid = fork();
+        if (pid < 0)
+        {
+            return false;
+        }
+        if (pid == 0)
+        {
+            execvp("ip", argv.data());
+            _exit(127); // execvp only returns on failure
+        }
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0)
+        {
+            return false;
+        }
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+} // namespace
 
 // Decode the error-class bits of a CAN error frame's can_id into a readable string.
 static std::string canErrorFrameToString(canid_t id)
@@ -29,6 +70,40 @@ CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("
     set_motor_origin_here_srv_ = this->create_service<robot_control_msgs::srv::SetMotorOriginHere>(
         "set_motor_origin_here",
         std::bind(&CubeMarsHardwareNode::set_motor_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
+}
+
+void CubeMarsHardwareNode::reset_can_interface(const std::string &interface_name)
+{
+    // Equivalent to:
+    //   ip link set $interface down
+    //   ip link set $interface type can bitrate $BITRATE dbitrate $DBITRATE fd on
+    //   ip link set $interface txqueuelen $TXQUEUELEN
+    //   ip link set $interface up
+    // Run on every configure so the link always starts from a known-good state (fixed bitrate,
+    // FD on, queue depth), regardless of whatever was left over from a previous run.
+    if (!run_ip_command({"link", "set", interface_name, "down"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to bring down CAN interface '" + interface_name + "' (requires CAP_NET_ADMIN)");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "type", "can",
+                          "bitrate", CAN_BITRATE, "dbitrate", CAN_DBITRATE, "fd", "on"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to set bitrate/dbitrate/fd on CAN interface '" + interface_name + "'");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "txqueuelen", CAN_TXQUEUELEN}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to set txqueuelen on CAN interface '" + interface_name + "'");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "up"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to bring up CAN interface '" + interface_name + "'");
+    }
+    RCLCPP_INFO(this->get_logger(), "Reset CAN interface '%s' (bitrate=%s dbitrate=%s txqueuelen=%s)",
+                interface_name.c_str(), CAN_BITRATE, CAN_DBITRATE, CAN_TXQUEUELEN);
 }
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
@@ -311,6 +386,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
+
+            reset_can_interface(can_interface_name);
 
             const std::string backend_param = "can_backends." + can_interface_name;
             this->declare_parameter_if_undeclared(backend_param, comm_backend_default);

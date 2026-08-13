@@ -298,6 +298,11 @@ public:
     LifecycleNodeInterface::CallbackReturn on_error(const rclcpp_lifecycle::State &previous_state) override;
     LifecycleNodeInterface::CallbackReturn on_shutdown(const rclcpp_lifecycle::State &previous_state) override;
 
+    // Bounce the given CAN interface (down, reconfigure bitrate/dbitrate/fd/txqueuelen, up) so
+    // every on_configure() starts from a known-good link state instead of whatever a previous
+    // run (or a wedged controller) left it in. Throws can_interface_error on failure.
+    void reset_can_interface(const std::string &interface_name);
+
     void watchdog_timer_callback();
     void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand::ConstSharedPtr &joint_cmd_msg);
     void joint_state_publish_callback();
