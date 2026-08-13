@@ -420,6 +420,9 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
+    // Read the Legacy_Response off the socket without checking or using its contents.
+    memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
+    ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
 
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorState_Message);
@@ -428,10 +431,13 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
+    // Read the Legacy_Response off the socket without checking or using its contents.
+    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
+    ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
 
-    // All three writes above triggered a Legacy_Response we deliberately didn't read; drain them
-    // now so they don't get picked up as a stale reply by the next one-shot transaction or the
-    // first cyclic send_and_receive().
+    // The MotionZero write above also triggered a Legacy_Response we deliberately didn't read;
+    // drain it now so it doesn't get picked up as a stale reply by the next one-shot transaction
+    // or the first cyclic send_and_receive().
     flush_rx_queue();
 }
 
