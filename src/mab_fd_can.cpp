@@ -359,17 +359,18 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
                                             can_id, errorFlagToString(qs_fault), quick_status));
     }
 
+    // Verify the drive's internal status registers are all clear before (re-)activating it.
+    VerboseStatus_Message vs_req;
     send_frame_.can_id = can_id;
-    send_frame_.len = sizeof(MotorMode_Message);
-    std::memcpy(send_frame_.data, &mm, sizeof(MotorMode_Message));
+    send_frame_.len = sizeof(VerboseStatus_Message);
+    std::memcpy(send_frame_.data, &vs_req, sizeof(VerboseStatus_Message));
     if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    // Same frame_id 0x41 readback semantics as the state write above.
-    memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (nbytes <= 0)
+    memset(&recv_frame_.data, 0, sizeof(VerboseStatus_Message));
+    int vs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+    if (vs_nbytes <= 0)
     {
         throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
     }
@@ -377,16 +378,48 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
     }
-    MotorMode_Message mm_reply;
-    std::memcpy(&mm_reply, recv_frame_.data, sizeof(MotorMode_Message));
-    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorMode write to can_id %u acknowledged (%d bytes received, register_value=%d)",
-                 static_cast<unsigned int>(can_id), nbytes, mm_reply.register_value);
-    if (mm_reply.register_value != mm.register_value)
+    VerboseStatus_Message vs_reply;
+    std::memcpy(&vs_reply, recv_frame_.data, sizeof(VerboseStatus_Message));
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "VerboseStatus read from can_id %u: main=%d aux=%d calib=%d bridge=%d hw=%d comm=%d homingStatus=%d motion=%d homingMode=%d",
+                 static_cast<unsigned int>(can_id), vs_reply.mainEncoderStatus_value, vs_reply.auxEncoderStatus_value,
+                 vs_reply.calibrationStatus_value, vs_reply.bridgeStatus_value, vs_reply.hardwareStatus_value,
+                 vs_reply.communicationStatus_value, vs_reply.homingStatus_value, vs_reply.motionStatus_value,
+                 vs_reply.homingMode_value);
+    if (vs_reply.mainEncoderStatus_value != 0 || vs_reply.auxEncoderStatus_value != 0 ||
+        vs_reply.calibrationStatus_value != 0 || vs_reply.bridgeStatus_value != 0 ||
+        vs_reply.hardwareStatus_value != 0 || vs_reply.communicationStatus_value != 0 ||
+        vs_reply.homingStatus_value != 0 || vs_reply.motionStatus_value != 0 ||
+        vs_reply.homingMode_value != 0)
     {
-        throw can_device_error(std::format("Motor mode register readback mismatch for can_id {}: expected {}, got {}", can_id, mm.register_value, mm_reply.register_value));
+        throw can_device_error(std::format(
+            "Motor with can_id {} reports a nonzero verbose status before activation "
+            "(main={}, aux={}, calib={}, bridge={}, hw={}, comm={}, homingStatus={}, motion={}, homingMode={})",
+            can_id, vs_reply.mainEncoderStatus_value, vs_reply.auxEncoderStatus_value,
+            vs_reply.calibrationStatus_value, vs_reply.bridgeStatus_value, vs_reply.hardwareStatus_value,
+            vs_reply.communicationStatus_value, vs_reply.homingStatus_value, vs_reply.motionStatus_value,
+            vs_reply.homingMode_value));
     }
 
-    //////////
+    // MotionZero_Message/MotorMode_Message/MotorState_Message use frame_id WRITE_REGISTER_LEGACY,
+    // so the reply is a Legacy_Response (not a register-echo) - it carries no useful
+    // acknowledgement for these writes, so we just fire them and move on without waiting for or
+    // reading a reply.
+    MotionZero_Message mz_req;
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotionZero_Message);
+    std::memcpy(send_frame_.data, &mz_req, sizeof(MotionZero_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(MotorMode_Message);
+    std::memcpy(send_frame_.data, &mm, sizeof(MotorMode_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
 
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorState_Message);
@@ -395,28 +428,11 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    // frame_id 0x41: the reply mirrors the request's struct layout (not a Legacy_Response), with
-    // register_value holding the register's current value, so we confirm the write stuck rather
-    // than just confirming *a* reply arrived.
-    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
-    nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (nbytes <= 0)
-    {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
-    MotorState_Message ms_reply;
-    std::memcpy(&ms_reply, recv_frame_.data, sizeof(MotorState_Message));
-    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorState write to can_id %u acknowledged (%d bytes received, register_value=%d)",
-                 static_cast<unsigned int>(can_id), nbytes, ms_reply.register_value);
-    if (ms_reply.register_value != ms.register_value)
-    {   
-        throw can_device_error(std::format("Motor state register readback mismatch for can_id {}: expected {}, got {}", can_id, ms.register_value, ms_reply.register_value));
-    }
 
+    // All three writes above triggered a Legacy_Response we deliberately didn't read; drain them
+    // now so they don't get picked up as a stale reply by the next one-shot transaction or the
+    // first cyclic send_and_receive().
+    flush_rx_queue();
 }
 
 void MabFdCan::flush_rx_queue()
@@ -556,7 +572,7 @@ void MabFdCan::end_motor_control_mode(unsigned int joint_id)
         throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints (highest joint id {})", std::to_string(joint_id), std::to_string(joint_configs_.size())));
     }
     MotorMode_Message mm;
-    mm.register_value = MOTION_MODE_IDLE;
+    mm.register_value = MOTION_MODE_IMPEDANCE;
     MotorState_Message sm;
     sm.register_value = MOTOR_STATE_DISABLE; // disable
     send_config_frames(joint_configs_[joint_id].can_id, mm, sm);

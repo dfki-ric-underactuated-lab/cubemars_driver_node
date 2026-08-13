@@ -108,15 +108,15 @@ namespace cubemars
 
     struct MotorMode_Message
     {
-        uint8_t frame_id = WRITE_REGISTER;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
         int16_t register_id = REGISTER_ID_MOTION_MODE_COMMAND;
-        int8_t register_value = MOTION_MODE_IDLE;
+        int8_t register_value = MOTION_MODE_IMPEDANCE;
     };
 
     struct MotorState_Message
     {
-        uint8_t frame_id = WRITE_REGISTER;
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
         uint8_t padding = 0x00;
         int16_t register_id = REGISTER_ID_STATE;
         int16_t register_value = MOTOR_STATE_DISABLE;
@@ -145,6 +145,48 @@ namespace cubemars
         uint8_t passing = 0x00;
         int16_t register_id = 0x00;
         T register_value = 0x00;
+    };
+
+    struct VerboseStatus_Message
+    {
+        uint8_t frame_id           = READ_REGISTER;
+        uint8_t padding                     = 0x00;
+        int16_t mainEncoderStatus           = 0x809;
+        int32_t mainEncoderStatus_value     = 0;
+        int16_t auxEncoderStatus            = 0x80A;
+        int32_t auxEncoderStatus_value      = 0;
+        int16_t calibrationStatus           = 0x80B;
+        int32_t calibrationStatus_value     = 0;
+        int16_t bridgeStatus                = 0x80C;
+        int32_t bridgeStatus_value          = 0;
+        int16_t hardwareStatus              = 0x80D;
+        int32_t hardwareStatus_value        = 0;
+        int16_t communicationStatus         = 0x80E;
+        int32_t communicationStatus_value   = 0;
+        int16_t homingStatus                = 0x80F;
+        int32_t homingStatus_value          = 0;
+        int16_t motionStatus                = 0x810;
+        int32_t motionStatus_value          = 0;
+        int16_t homingMode                  = 0x071;
+        int8_t  homingMode_value            = 0;
+    };
+
+    struct MotionZero_Message
+    {
+        uint8_t frame_id = WRITE_REGISTER_LEGACY;
+        uint8_t padding = 0x00;
+        int16_t posp_register_id = 0x30;
+        float posp_register_value = 0.f;
+        int16_t posi_register_id = 0x31;
+        float posi_register_value = 0.f;
+        int16_t posd_register_id = 0x32;
+        float posd_register_value = 0.f;
+        int16_t velp_register_id = 0x40;
+        float velp_register_value = 0.f;
+        int16_t veli_register_id = 0x41;
+        float veli_register_value = 0.f;
+        int16_t veld_register_id = 0x42;
+        float veld_register_value = 0.f;
     };
 
     struct MotionCommand_Message
