@@ -322,10 +322,14 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
     zero_kp_m.register_value = 0.f;
     send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     WriteSingleRegister_Message<float> zero_kd_m;
     zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
     zero_kd_m.register_value = 0.f;
     send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
     // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
@@ -358,6 +362,8 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
         throw can_device_error(std::format("Motor with can_id {} reports {} before activation (Quick Status 0x{:04X})",
                                             can_id, errorFlagToString(qs_fault), quick_status));
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Verify the drive's internal status registers are all clear before (re-)activating it.
     /*VerboseStatus_Message vs_req;
@@ -443,6 +449,8 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
         throw can_device_error(std::format("Motor mode register readback mismatch for can_id {}: expected {}, got {}", can_id, mm.register_value, mm_reply.register_value));
     }
 
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotorState_Message);
     std::memcpy(send_frame_.data, &ms, sizeof(MotorState_Message));
@@ -468,6 +476,8 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Motor state register readback mismatch for can_id {}: expected {}, got {}", can_id, ms.register_value, ms_reply.register_value));
     }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 void MabFdCan::flush_rx_queue()

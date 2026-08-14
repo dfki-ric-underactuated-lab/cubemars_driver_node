@@ -108,6 +108,8 @@ void CubeMarsHardwareNode::reset_can_interface(const std::string &interface_name
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
+    RCLCPP_INFO(this->get_logger(), "Configuring Cubemars Motors ... ");
+
     /**Declare and read parameters */
     this->declare_parameter_if_undeclared("joints", rclcpp::PARAMETER_STRING_ARRAY);
     this->declare_parameter_if_undeclared("default_damping_KD", rclcpp::PARAMETER_DOUBLE);
@@ -383,10 +385,13 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // Now create can devices and callback. The communication backend is selected per CAN interface
         // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
         // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
+
+        // Sleep for some seconds to avoid enabling the motors right after power cycling...
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
-
             reset_can_interface(can_interface_name);
 
             const std::string backend_param = "can_backends." + can_interface_name;
