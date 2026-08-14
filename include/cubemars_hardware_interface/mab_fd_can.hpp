@@ -163,8 +163,12 @@ namespace cubemars
         int32_t hardwareStatus_value        = 0;
         int16_t communicationStatus         = 0x80E;
         int32_t communicationStatus_value   = 0;
+        int16_t homingStatus                = 0x80F;
+        int32_t homingStatus_value          = 0;
         int16_t motionStatus                = 0x810;
         int32_t motionStatus_value          = 0;
+        int16_t homingMode                  = 0x071;
+        int8_t  homingMode_value            = 0;
     };
 
     struct MotionZero_Message
