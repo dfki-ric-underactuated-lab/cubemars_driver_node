@@ -360,7 +360,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     }
 
     // Verify the drive's internal status registers are all clear before (re-)activating it.
-    /*VerboseStatus_Message vs_req;
+    VerboseStatus_Message vs_req;
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(VerboseStatus_Message);
     std::memcpy(send_frame_.data, &vs_req, sizeof(VerboseStatus_Message));
@@ -380,30 +380,26 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     }
     VerboseStatus_Message vs_reply;
     std::memcpy(&vs_reply, recv_frame_.data, sizeof(VerboseStatus_Message));
-    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "VerboseStatus read from can_id %u: main=%d aux=%d calib=%d bridge=%d hw=%d comm=%d homingStatus=%d motion=%d homingMode=%d",
+    RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "VerboseStatus read from can_id %u: main=%d aux=%d calib=%d bridge=%d hw=%d comm=%d motion=%d",
                  static_cast<unsigned int>(can_id), vs_reply.mainEncoderStatus_value, vs_reply.auxEncoderStatus_value,
                  vs_reply.calibrationStatus_value, vs_reply.bridgeStatus_value, vs_reply.hardwareStatus_value,
-                 vs_reply.communicationStatus_value, vs_reply.homingStatus_value, vs_reply.motionStatus_value,
-                 vs_reply.homingMode_value);
+                 vs_reply.communicationStatus_value, vs_reply.motionStatus_value);
     if (vs_reply.mainEncoderStatus_value != 0 || vs_reply.auxEncoderStatus_value != 0 ||
         vs_reply.calibrationStatus_value != 0 || vs_reply.bridgeStatus_value != 0 ||
         vs_reply.hardwareStatus_value != 0 || vs_reply.communicationStatus_value != 0 ||
-        vs_reply.homingStatus_value != 0 || vs_reply.motionStatus_value != 0 ||
-        vs_reply.homingMode_value != 0)
+        vs_reply.motionStatus_value != 0)
     {
         throw can_device_error(std::format(
             "Motor with can_id {} reports a nonzero verbose status before activation "
-            "(main={}, aux={}, calib={}, bridge={}, hw={}, comm={}, homingStatus={}, motion={}, homingMode={})",
+            "(main={}, aux={}, calib={}, bridge={}, hw={}, comm={}, motion={})",
             can_id, vs_reply.mainEncoderStatus_value, vs_reply.auxEncoderStatus_value,
             vs_reply.calibrationStatus_value, vs_reply.bridgeStatus_value, vs_reply.hardwareStatus_value,
-            vs_reply.communicationStatus_value, vs_reply.homingStatus_value, vs_reply.motionStatus_value,
-            vs_reply.homingMode_value));
+            vs_reply.communicationStatus_value, vs_reply.motionStatus_value));
     }
 
-    // MotionZero_Message/MotorMode_Message/MotorState_Message use frame_id WRITE_REGISTER_LEGACY,
-    // so the reply is a Legacy_Response (not a register-echo) - it carries no useful
-    // acknowledgement for these writes, so we just fire them and move on without waiting for or
-    // reading a reply.
+    // MotionZero_Message uses frame_id WRITE_REGISTER_LEGACY, so the reply is a Legacy_Response
+    // (not a register-echo) - it carries no useful acknowledgement for this write, so we just
+    // fire it and move on without waiting for or reading a reply.
     MotionZero_Message mz_req;
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(MotionZero_Message);
@@ -412,7 +408,6 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    */
 
     // MotorMode_Message/MotorState_Message use frame_id WRITE_REGISTER, so the reply mirrors the
     // request's struct layout (a register echo, not a Legacy_Response) - confirm the write
