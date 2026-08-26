@@ -287,16 +287,20 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
-    int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (nbytes <= 0)
+    // Skip stale/unrelated replies rather than failing on the first mismatch: a config-time
+    // keepalive thread (see send_zero_motion_keepalive) may be firing MotionCommand frames at
+    // other joints on this same interface concurrently, and their Legacy_Response replies can
+    // land in between here.
+    int nbytes;
+    do
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+        memset(&recv_frame_.data, 0, sizeof(Legacy_Response));
+        nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+    } while (recv_frame_.can_id != can_id);
     int16_t register_id;
     std::memcpy(&register_id, static_cast<const uint8_t *>(msg) + 2, sizeof(register_id));
     RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "Register 0x%X write to can_id %u acknowledged (%d bytes received)",
@@ -311,10 +315,10 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     // CanReinit_Message reinit_msg;
     // send_register_command(can_id, &reinit_msg, sizeof(reinit_msg));
     // //std::this_thread::sleep_for(std::chrono::seconds(0.1));
-    // ClearWarnings_Message clear_warnings_msg;
-    // send_register_command(can_id, &clear_warnings_msg, sizeof(clear_warnings_msg));
-    // ClearErrors_Message clear_errors_msg;
-    // send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
+    ClearWarnings_Message clear_warnings_msg;
+    send_register_command(can_id, &clear_warnings_msg, sizeof(clear_warnings_msg));
+    ClearErrors_Message clear_errors_msg;
+    send_register_command(can_id, &clear_errors_msg, sizeof(clear_errors_msg));
 
     // Zero out the PID gains before (re-)configuring the motion mode/state below, so the motor
     // doesn't briefly chase a stale impedance target left over from before this write.
@@ -341,16 +345,20 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
-    int qs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (qs_nbytes <= 0)
+    // Skip stale/unrelated replies rather than failing on the first mismatch: a config-time
+    // keepalive thread (see send_zero_motion_keepalive) may be firing MotionCommand frames at
+    // other joints on this same interface concurrently, and their Legacy_Response replies can
+    // land in between here.
+    int qs_nbytes;
+    do
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+        memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
+        qs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (qs_nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+    } while (recv_frame_.can_id != can_id);
     QuickStatus_Message qs_reply;
     std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
     const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
@@ -374,16 +382,16 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(VerboseStatus_Message));
-    int vs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (vs_nbytes <= 0)
+    int vs_nbytes;
+    do
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+        memset(&recv_frame_.data, 0, sizeof(VerboseStatus_Message));
+        vs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (vs_nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+    } while (recv_frame_.can_id != can_id);
     VerboseStatus_Message vs_reply;
     std::memcpy(&vs_reply, recv_frame_.data, sizeof(VerboseStatus_Message));
     RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "VerboseStatus read from can_id %u: main=%d aux=%d calib=%d bridge=%d hw=%d comm=%d homingStatus=%d motion=%d homingMode=%d",
@@ -430,16 +438,20 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
-    int mm_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (mm_nbytes <= 0)
+    // Skip stale/unrelated replies rather than failing on the first mismatch: a config-time
+    // keepalive thread (see send_zero_motion_keepalive) may be firing MotionCommand frames at
+    // other joints on this same interface concurrently, and their Legacy_Response replies can
+    // land in between here.
+    int mm_nbytes;
+    do
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+        memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
+        mm_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (mm_nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+    } while (recv_frame_.can_id != can_id);
     MotorMode_Message mm_reply;
     std::memcpy(&mm_reply, recv_frame_.data, sizeof(MotorMode_Message));
     RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorMode write to can_id %u acknowledged (%d bytes received, register_value=%d)",
@@ -458,16 +470,16 @@ void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, M
     {
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
-    memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
-    int ms_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (ms_nbytes <= 0)
+    int ms_nbytes;
+    do
     {
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
+        memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
+        ms_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (ms_nbytes <= 0)
+        {
+            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+        }
+    } while (recv_frame_.can_id != can_id);
     MotorState_Message ms_reply;
     std::memcpy(&ms_reply, recv_frame_.data, sizeof(MotorState_Message));
     RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "MotorState write to can_id %u acknowledged (%d bytes received, register_value=%d)",
@@ -607,6 +619,29 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
     {
         throw can_interface_error(std::format("Failed to set socket option for timeout - {} ", std::string(strerror(errno))));
+    }
+}
+
+void MabFdCan::send_zero_motion_keepalive(unsigned int joint_id)
+{
+    if (joint_id >= joint_configs_.size())
+    {
+        throw std::range_error(std::format("joint_id {} has to be one of the indeces of specified joints", std::to_string(joint_id)));
+    }
+
+    // Deliberately uses a local frame instead of the send_frame_/recv_frame_ members: this is
+    // called from a separate keepalive thread while the configuring thread may concurrently be
+    // using those shared members for the next joint's one-shot handshake, and this call never
+    // reads a reply, so there is nothing here to race on.
+    canfd_frame frame{};
+    frame.can_id = joint_configs_[joint_id].can_id;
+    frame.len = sizeof(MotionCommand_Message);
+    frame.flags = CANFD_BRS;
+    MotionCommand_Message cmd; // all-zero setpoint by default
+    std::memcpy(frame.data, &cmd, sizeof(MotionCommand_Message));
+    if (::write(can_socket_fd_, &frame, sizeof(frame)) < 0)
+    {
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(frame.can_id), std::string(strerror(errno))));
     }
 }
 

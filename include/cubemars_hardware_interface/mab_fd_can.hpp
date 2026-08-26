@@ -223,6 +223,7 @@ namespace cubemars
         void start_motor_control_mode(bool set_zero_position_on_enable) override;
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
+        void send_zero_motion_keepalive(unsigned int joint_id) override;
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 
