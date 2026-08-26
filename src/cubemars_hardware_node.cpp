@@ -470,7 +470,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                                         can_interfaces_[i]->GetName().c_str(), j, e.what());
                         }
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
             });
 
@@ -491,6 +491,15 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
             keepalive_running.store(false, std::memory_order_relaxed);
             keepalive_thread.join();
+
+            // The last keepalive write(s) may still be in flight (motor hasn't replied yet) when
+            // the thread stops; give it a moment to actually land, then drop everything sitting in
+            // the RX queue so the cyclic comm loop below starts from a clean slate. Without this,
+            // leftover keepalive Legacy_Response replies get consumed by send_and_receive()'s
+            // reply-matching loop in place of the fresh replies it's actually waiting for, which
+            // reads as spurious communication errors on whichever joints' replies got displaced.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            can_interfaces_[i]->flush_rx_queue();
         }
 
         if(failure){

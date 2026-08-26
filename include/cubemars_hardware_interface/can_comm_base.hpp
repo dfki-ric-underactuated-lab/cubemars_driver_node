@@ -64,6 +64,12 @@ namespace cubemars
         // Backends without such a watchdog (e.g. CubemarsCan) can leave this a no-op.
         virtual void send_zero_motion_keepalive([[maybe_unused]] unsigned int joint_id) {}
 
+        // Discard any frames currently queued in the socket's RX buffer without reading them,
+        // e.g. to drop stray keepalive replies left over from configuration before the cyclic
+        // send_and_receive() loop starts reading. Backends without such stray traffic (e.g.
+        // CubemarsCan) can leave this a no-op.
+        virtual void flush_rx_queue() {}
+
         // One control cycle: write every command, then receive and demultiplex every reply into states.
         // is_active distinguishes the lifecycle's ACTIVE state from INACTIVE; backends that don't need
         // the distinction (e.g. CubemarsCan) simply ignore it.

@@ -1,6 +1,6 @@
 cubemars_hardware_node:
   ros__parameters:
-    joints: ["joint_test1","joint_test2","joint_test3","joint_test4"]
+    joints: ["joint_test1"]#,"joint_test2","joint_test3","joint_test4"]
     watchdog_frequency: 10
     default_damping_KD: 1.0
     frequency: 500

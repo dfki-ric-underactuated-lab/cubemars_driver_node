@@ -224,6 +224,7 @@ namespace cubemars
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
         void send_zero_motion_keepalive(unsigned int joint_id) override;
+        void flush_rx_queue() override;
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 
@@ -247,9 +248,6 @@ namespace cubemars
         // Write a single MAB register-protocol message and confirm the motor's acknowledgement
         // (matching can_id reply); throws can_device_error if none arrives.
         void send_register_command(const canid_t &can_id, const void *msg, uint8_t msg_len);
-        // Discard stale frames from the socket RX queue (replies that arrived after a cyclic
-        // receive timeout), so a one-shot transaction reads its own acknowledgement.
-        void flush_rx_queue();
 
         // recvmsg-based receive that pulls the kernel software RX timestamp (SO_TIMESTAMPNS, CLOCK_REALTIME
         // ns) and the card hardware RX timestamp (SCM_TIMESTAMPING ts[2], raw clock); each 0 if unavailable.
