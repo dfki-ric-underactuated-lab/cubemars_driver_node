@@ -392,7 +392,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
-            // reset_can_interface(can_interface_name); // disabled: skip bringing the CAN interface down/up on configure
+            reset_can_interface(can_interface_name);
 
             const std::string backend_param = "can_backends." + can_interface_name;
             this->declare_parameter_if_undeclared(backend_param, comm_backend_default);
@@ -442,44 +442,11 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         std::string error_string = "";
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
-            // Motors on this interface are configured one at a time below, and each configure
-            // handshake (with its deliberate inter-frame sleeps) can take well over the drive's
-            // ~100ms motion-command watchdog window. Without this, a motor enabled early would be
-            // disabled again by its own watchdog before the cyclic comm thread starts feeding it,
-            // by the time later motors on the same interface finish configuring. So: as soon as a
-            // joint's handshake succeeds, feed it zero-setpoint keepalive commands from a
-            // background thread until every joint on this interface is done.
-            std::vector<std::atomic<bool>> joint_configured(joint_parameters_per_can_interface_[i].size());
-            std::atomic<bool> keepalive_running{true};
-            std::thread keepalive_thread([this, i, &joint_configured, &keepalive_running]() {
-                while (keepalive_running.load(std::memory_order_relaxed))
-                {
-                    for (unsigned int j = 0; j < joint_configured.size(); j++)
-                    {
-                        if (!joint_configured[j].load(std::memory_order_relaxed))
-                        {
-                            continue;
-                        }
-                        try
-                        {
-                            can_interfaces_[i]->send_zero_motion_keepalive(j);
-                        }
-                        catch (const std::exception &e)
-                        {
-                            RCLCPP_WARN(this->get_logger(), "Config-time keepalive failed for can_interface %s joint %u: %s",
-                                        can_interfaces_[i]->GetName().c_str(), j, e.what());
-                        }
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                }
-            });
-
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 try // We catch this to actually now which all are missing and if it is a bus problem or a motor problem
                 {
                     can_interfaces_[i]->start_motor_control_mode(j, joint_parameters_per_can_interface_[i][j].set_zero_position_on_startup);
-                    joint_configured[j].store(true, std::memory_order_relaxed);
                     RCLCPP_INFO(this->get_logger(), "Succesfully enabled motor on can_interface %s with can_id %i", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id);
                 }
                 catch(const std::exception & e)
@@ -488,18 +455,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     failure = true;
                 }
             }
-
-            keepalive_running.store(false, std::memory_order_relaxed);
-            keepalive_thread.join();
-
-            // The last keepalive write(s) may still be in flight (motor hasn't replied yet) when
-            // the thread stops; give it a moment to actually land, then drop everything sitting in
-            // the RX queue so the cyclic comm loop below starts from a clean slate. Without this,
-            // leftover keepalive Legacy_Response replies get consumed by send_and_receive()'s
-            // reply-matching loop in place of the fresh replies it's actually waiting for, which
-            // reads as spurious communication errors on whichever joints' replies got displaced.
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            can_interfaces_[i]->flush_rx_queue();
         }
 
         if(failure){

@@ -56,20 +56,6 @@ namespace cubemars
         // stays enabled throughout). Used to calibrate an already-active motor.
         virtual void set_zero_position(unsigned int joint_id) = 0;
 
-        // Fire a single zero-setpoint motion command at an already-enabled joint, without waiting
-        // for or reading any reply. Meant to be called from a separate keepalive thread DURING
-        // on_configure(), while sibling joints on the same interface are still being configured
-        // sequentially (which can take well over a drive's motion-command watchdog window) -- so
-        // an already-enabled motor isn't disabled again before the cyclic comm thread starts.
-        // Backends without such a watchdog (e.g. CubemarsCan) can leave this a no-op.
-        virtual void send_zero_motion_keepalive([[maybe_unused]] unsigned int joint_id) {}
-
-        // Discard any frames currently queued in the socket's RX buffer without reading them,
-        // e.g. to drop stray keepalive replies left over from configuration before the cyclic
-        // send_and_receive() loop starts reading. Backends without such stray traffic (e.g.
-        // CubemarsCan) can leave this a no-op.
-        virtual void flush_rx_queue() {}
-
         // One control cycle: write every command, then receive and demultiplex every reply into states.
         // is_active distinguishes the lifecycle's ACTIVE state from INACTIVE; backends that don't need
         // the distinction (e.g. CubemarsCan) simply ignore it.
