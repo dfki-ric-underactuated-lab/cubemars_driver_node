@@ -392,7 +392,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
-            reset_can_interface(can_interface_name);
+            //reset_can_interface(can_interface_name);
 
             const std::string backend_param = "can_backends." + can_interface_name;
             this->declare_parameter_if_undeclared(backend_param, comm_backend_default);
