@@ -386,9 +386,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
         // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
 
-        // Sleep for some seconds to avoid enabling the motors right after power cycling...
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
@@ -402,6 +399,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
             if (backend == "cubemars")
             {
+                // Sleep for some seconds to avoid enabling the motors right after power cycling...
+                std::this_thread::sleep_for(std::chrono::milliseconds(3000));
                 can_interfaces_[can_interface_id] = std::make_shared<cubemars::CubemarsCan>(
                     can_interface_name,
                     this->get_parameter("enable_loopback").as_bool(),
@@ -414,7 +413,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             }
             else if (backend == "mab")
             {
-                can_interfaces_[can_interface_id] = std::make_shared<cubemars::MabFdCan>(
+                auto mab_can = std::make_shared<cubemars::MabFdCan>(
                     can_interface_name,
                     this->get_parameter("enable_loopback").as_bool(),
                     joint_configs_per_can_interface[can_interface_id],
@@ -423,6 +422,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     this->get_parameter("can_initial_connection_trials").as_int(),
                     enable_tx_timestamping_,
                     enable_can_error_frames_);
+                // Instead of a blind post-power-cycle sleep: actively poll every motor's QuickStatus
+                // at 10 Hz for up to 3s and require every reading to be fault-free before proceeding.
+                RCLCPP_INFO(this->get_logger(), "CAN interface '%s': polling QuickStatus on all motors for up to 3s before configuring...",
+                            can_interface_name.c_str());
+                mab_can->wait_for_healthy_quick_status();
+                can_interfaces_[can_interface_id] = mab_can;
             }
             else
             {
@@ -509,6 +514,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // Notidy users
         RCLCPP_ERROR(this->get_logger(), "A CAN communication error occured: %s", exception.what());
         // This only happens during CAN creation, hence it should be enough to just deactivate the interfaces
+        can_interfaces_.clear();
+        return LifecycleNodeInterface::CallbackReturn::ERROR;
+    }
+    catch (cubemars::can_device_error &exception)
+    {
+        // Thrown by wait_for_healthy_quick_status() if a motor reports a fault (or doesn't reply)
+        // before any motor has been activated yet, so just deactivating the interfaces is enough.
+        RCLCPP_ERROR(this->get_logger(), "A motor reported a problem before configuring: %s", exception.what());
         can_interfaces_.clear();
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }

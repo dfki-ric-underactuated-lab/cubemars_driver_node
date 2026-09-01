@@ -303,6 +303,49 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
                  register_id, static_cast<unsigned int>(can_id), nbytes);
 }
 
+void MabFdCan::wait_for_healthy_quick_status(std::chrono::milliseconds wait_duration)
+{
+    constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
+    const auto deadline = std::chrono::steady_clock::now() + wait_duration;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        for (const auto &cfg : joint_configs_)
+        {
+            QuickStatus_Message qs_req;
+            send_frame_.can_id = cfg.can_id;
+            send_frame_.len = sizeof(QuickStatus_Message);
+            std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
+            if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
+            {
+                throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(cfg.can_id), std::string(strerror(errno))));
+            }
+            memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
+            int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+            if (nbytes <= 0)
+            {
+                throw can_device_error(std::format("Did not receive QuickStatus reply from can_id {} while waiting for motors to settle - {} ", std::to_string(cfg.can_id), std::string(strerror(errno))));
+            }
+            if (recv_frame_.can_id != cfg.can_id)
+            {
+                throw can_device_error(std::format("QuickStatus reply from can_id {} instead of expected {}", recv_frame_.can_id, cfg.can_id));
+            }
+            QuickStatus_Message qs_reply;
+            std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
+            const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
+            RCLCPP_DEBUG(rclcpp::get_logger("MabFdCan"), "QuickStatus read from can_id %u while waiting for motors to settle: 0x%04X",
+                         static_cast<unsigned int>(cfg.can_id), quick_status);
+            const ErrorCode qs_fault = mab_quick_status_to_error(quick_status);
+            if (qs_fault != ErrorCode::NO_FAULT)
+            {
+                throw can_device_error(std::format(
+                    "Motor with can_id {} reports {} while waiting for motors to settle (Quick Status 0x{:04X})",
+                    cfg.can_id, errorFlagToString(qs_fault), quick_status));
+            }
+        }
+        std::this_thread::sleep_for(poll_period);
+    }
+}
+
 void MabFdCan::send_config_frames(const canid_t &can_id, MotorMode_Message mm, MotorState_Message ms)
 {
     // Reset the drive and clear any latched warnings/errors before (re-)configuring it, so a motor
