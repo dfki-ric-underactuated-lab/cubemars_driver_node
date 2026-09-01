@@ -225,10 +225,11 @@ namespace cubemars
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
 
-        // Actively confirm every motor on this interface is fault-free before configuring: cycles a
-        // QuickStatus read to each motor at 10 Hz for wait_duration, throwing can_device_error as soon
-        // as any motor reports a fault or fails to reply. Meant to replace a blind settle-time sleep
-        // (e.g. right after power-up) with a real check that the bus/motors are actually alive.
+        // Settle-timer replacement for a blind post-power-cycle sleep: cycles a QuickStatus read to
+        // every motor at 10 Hz for the full wait_duration (always runs the complete duration, not
+        // just until the first fault), then throws can_device_error if any motor ever reported a
+        // fault or failed to reply during that window - i.e. confirms every motor was healthy for
+        // the *entire* wait, not just at a single point in time.
         void wait_for_healthy_quick_status(std::chrono::milliseconds wait_duration = std::chrono::milliseconds(3000));
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
