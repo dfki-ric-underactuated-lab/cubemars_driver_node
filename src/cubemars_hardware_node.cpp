@@ -531,7 +531,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
-    RCLCPP_WARN(this->get_logger(), "Cleaning up");
+    RCLCPP_INFO(this->get_logger(), "Cleaning up Cubemars hardware node");
     // Unregister parameter callback first so it cannot fire during teardown
     on_set_parameters_handle_.reset();
     // Stop all timers and comm threads. Joining the comm threads BEFORE taking the mutexes is
@@ -641,7 +641,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
     // Always return success, since then the driver is unconfigured(). And from there we can try to start over again.
     (void)success;
-    RCLCPP_WARN(this->get_logger(), "Clean up done ok");
+    RCLCPP_INFO(this->get_logger(), "Clean up done");
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -782,7 +782,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
             ros2_joint_state_msg_.effort.clear();
             ros2_joint_state_msg_.name.clear();
         }
-        RCLCPP_INFO(this->get_logger(), "Handling error in PRIMARY_STATE_UNCONFIGURED sucessfull");
+        //RCLCPP_INFO(this->get_logger(), "Handling error in PRIMARY_STATE_UNCONFIGURED sucessfull");
         break;
     case lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE:
         // Assumption: Something went wrong during activate() or cleanup()
