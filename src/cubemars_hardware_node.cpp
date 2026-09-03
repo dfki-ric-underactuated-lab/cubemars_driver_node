@@ -1,5 +1,46 @@
 #include "cubemars_hardware_interface/cubemars_hardware_node.hpp"
 #include <linux/can/error.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+namespace
+{
+    // Statically fixed: every MAB/CubeMars CAN interface this node drives runs at the same
+    // arbitration/data bitrate and queue depth, so these aren't exposed as parameters.
+    constexpr const char *CAN_BITRATE = "1000000";
+    constexpr const char *CAN_DBITRATE = "2000000";
+    constexpr const char *CAN_TXQUEUELEN = "1000";
+
+    // Run `ip` with the given argv (excluding argv[0]) via fork+execvp, bypassing the shell so an
+    // interface name never risks command injection. Returns true on exit code 0.
+    bool run_ip_command(const std::vector<std::string> &args)
+    {
+        std::vector<char *> argv;
+        argv.push_back(const_cast<char *>("ip"));
+        for (const auto &arg : args)
+        {
+            argv.push_back(const_cast<char *>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+
+        pid_t pid = fork();
+        if (pid < 0)
+        {
+            return false;
+        }
+        if (pid == 0)
+        {
+            execvp("ip", argv.data());
+            _exit(127); // execvp only returns on failure
+        }
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0)
+        {
+            return false;
+        }
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+} // namespace
 
 // Decode the error-class bits of a CAN error frame's can_id into a readable string.
 static std::string canErrorFrameToString(canid_t id)
@@ -20,10 +61,55 @@ static std::string canErrorFrameToString(canid_t id)
 
 CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("cubemars_hardware_node")
 {
+    // Created once, for the node's whole lifetime (not per-configure): the origin-here services
+    // must stay available in every lifecycle state, since which state is actually valid for a given
+    // motor's zero+save depends on its backend (checked inside the callbacks themselves).
+    set_all_motors_origin_here_srv_ = this->create_service<std_srvs::srv::Trigger>(
+        "set_all_motors_origin_here",
+        std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
+    set_motor_origin_here_srv_ = this->create_service<robot_control_msgs::srv::SetMotorOriginHere>(
+        "set_motor_origin_here",
+        std::bind(&CubeMarsHardwareNode::set_motor_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
+}
+
+void CubeMarsHardwareNode::reset_can_interface(const std::string &interface_name)
+{
+    // Equivalent to:
+    //   ip link set $interface down
+    //   ip link set $interface type can bitrate $BITRATE dbitrate $DBITRATE fd on
+    //   ip link set $interface txqueuelen $TXQUEUELEN
+    //   ip link set $interface up
+    // Run on every configure so the link always starts from a known-good state (fixed bitrate,
+    // FD on, queue depth), regardless of whatever was left over from a previous run.
+    if (!run_ip_command({"link", "set", interface_name, "down"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to bring down CAN interface '" + interface_name + "' (requires CAP_NET_ADMIN)");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "type", "can",
+                          "bitrate", CAN_BITRATE, "dbitrate", CAN_DBITRATE, "fd", "on"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to set bitrate/dbitrate/fd on CAN interface '" + interface_name + "'");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "txqueuelen", CAN_TXQUEUELEN}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to set txqueuelen on CAN interface '" + interface_name + "'");
+    }
+    if (!run_ip_command({"link", "set", interface_name, "up"}))
+    {
+        throw cubemars::can_interface_error(
+            "Failed to bring up CAN interface '" + interface_name + "'");
+    }
+    RCLCPP_INFO(this->get_logger(), "Reset CAN interface '%s' (bitrate=%s dbitrate=%s txqueuelen=%s)",
+                interface_name.c_str(), CAN_BITRATE, CAN_DBITRATE, CAN_TXQUEUELEN);
 }
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
+    RCLCPP_INFO(this->get_logger(), "Configuring Cubemars Motors ... ");
+
     /**Declare and read parameters */
     this->declare_parameter_if_undeclared("joints", rclcpp::PARAMETER_STRING_ARRAY);
     this->declare_parameter_if_undeclared("default_damping_KD", rclcpp::PARAMETER_DOUBLE);
@@ -39,6 +125,9 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     this->declare_parameter_if_undeclared("can_initial_connection_trials", 10);
     this->declare_parameter_if_undeclared("enable_tx_timestamping", true);
     this->declare_parameter_if_undeclared("enable_can_error_frames", false);
+    // Per-CAN-interface communication backend selection: each interface
+    // picks "cubemars" or "mab" via can_backends.<interface>, defaulting to comm_backend_default.
+    this->declare_parameter_if_undeclared("comm_backend_default", std::string("cubemars"));
 
     std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
@@ -51,6 +140,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         max_can_errors_before_motor_shutdown_ = this->get_parameter("max_can_errors_before_motor_shutdown").as_int();
         enable_tx_timestamping_ = this->get_parameter("enable_tx_timestamping").as_bool();
         enable_can_error_frames_ = this->get_parameter("enable_can_error_frames").as_bool();
+        const std::string comm_backend_default = this->get_parameter("comm_backend_default").as_string();
 
         auto joint_names = this->get_parameter("joints").as_string_array();
         default_damping_KD_ = this->get_parameter("default_damping_KD").as_double();
@@ -79,6 +169,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         }
         unfiltered_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_velocities_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
         unfiltered_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_positions_unfiltered", QOS_BEST_EFFORT_NO_DEPTH);
+        output_encoder_position_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_output_encoder_positions_debug", QOS_BEST_EFFORT_NO_DEPTH);
+        output_encoder_velocity_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("joint_output_encoder_velocities_debug", QOS_BEST_EFFORT_NO_DEPTH);
         controller_latency_pub_ = this->create_publisher<std_msgs::msg::Float32>("controller_latency_us", QOS_BEST_EFFORT_NO_DEPTH);
         if (publish_ros2_joint_state_)
         {
@@ -198,6 +290,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         joint_rx_hw_base_ns_.assign(max_msg_idx + 1, 0);
         unfiltered_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
         unfiltered_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        output_encoder_position_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
+        output_encoder_velocity_msg_.data.resize(max_msg_idx + 1, std::nanf(""));
 
         if (ros2_joint_state_pub_)
         {
@@ -206,6 +300,10 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             ros2_joint_state_msg_.effort.resize(max_msg_idx + 1, 0.0);
             ros2_joint_state_msg_.name.resize(max_msg_idx + 1, "");
         }
+
+        // Rebuilt fresh below; not cleared on cleanup, so a stale set from a previous configure()
+        // shouldn't linger if this configure() attempt fails partway through.
+        origin_here_joint_info_.clear();
 
         for (unsigned int i = 0; i < joint_names.size(); i++)
         {
@@ -216,6 +314,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             auto msg_idx = this->get_parameter("joint_defintions." + joint_names[i] + ".msg_idx").as_int();
             auto can_interface = this->get_parameter("joint_defintions." + joint_names[i] + ".can_interface").as_string();
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface));
+
+            const std::string origin_backend_param = "can_backends." + can_interface;
+            this->declare_parameter_if_undeclared(origin_backend_param, comm_backend_default);
+            origin_here_joint_info_.push_back({joint_names[i], static_cast<unsigned int>(msg_idx), can_interface,
+                                                this->get_parameter(origin_backend_param).as_string(),
+                                                joint_config.can_id, joint_config.series_type, joint_config.reply_on_own_id});
             unsigned int vel_filter_size = this->get_parameter("joint_defintions." + joint_names[i] + ".vel_filter_size").as_int();
             auto vel_filter_type_str = this->get_parameter("joint_defintions." + joint_names[i] + ".vel_filter_type").as_string();
             VelFilterType vel_filter_type;
@@ -247,7 +351,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             unsigned int pos_median_filter_size = static_cast<unsigned int>(pos_median_filter_size_raw);
             joint_configs_per_can_interface[can_interface_id].push_back(joint_config);
             joint_commands_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, 0});
-            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0, 0, 0});
+            joint_states_per_can_interface_[can_interface_id].push_back({0, 0, 0, 0, std::nanf(""), std::nanf(""), cubemars::ErrorCode::NO_FAULT, cubemars::ComStatus::SUCCESS, 0, 0, 0, 0, 0, 0});
             joint_parameters_per_can_interface_[can_interface_id].push_back({this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_min").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".pos_limit_max").as_double(),
                                                                              this->get_parameter("joint_defintions." + joint_names[i] + ".transmission_ratio").as_double(),
@@ -278,20 +382,59 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             }
         }
 
-        // Now create can devices and callback
+        // Now create can devices and callback. The communication backend is selected per CAN interface
+        // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
+        // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
+
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
-            can_interfaces_[can_interface_id] = std::make_shared<cubemars::CubemarsCan>(
-                can_interface_name,
-                this->get_parameter("enable_loopback").as_bool(),
-                joint_configs_per_can_interface[can_interface_id],
-                this->get_parameter("can_socket_timeout_sec").as_int(),
-                this->get_parameter("can_socket_timeout_usec").as_int(),
-                this->get_parameter("can_initial_connection_trials").as_int(),
-                enable_tx_timestamping_,
-                enable_can_error_frames_
-            );
+            reset_can_interface(can_interface_name);
+
+            const std::string backend_param = "can_backends." + can_interface_name;
+            this->declare_parameter_if_undeclared(backend_param, comm_backend_default);
+            const std::string backend = this->get_parameter(backend_param).as_string();
+            RCLCPP_INFO(this->get_logger(), "CAN interface '%s': selected comm backend '%s'",
+                        can_interface_name.c_str(), backend.c_str());
+
+            if (backend == "cubemars")
+            {
+                // Sleep for some seconds to avoid enabling the motors right after power cycling...
+                std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+                can_interfaces_[can_interface_id] = std::make_shared<cubemars::CubemarsCan>(
+                    can_interface_name,
+                    this->get_parameter("enable_loopback").as_bool(),
+                    joint_configs_per_can_interface[can_interface_id],
+                    this->get_parameter("can_socket_timeout_sec").as_int(),
+                    this->get_parameter("can_socket_timeout_usec").as_int(),
+                    this->get_parameter("can_initial_connection_trials").as_int(),
+                    enable_tx_timestamping_,
+                    enable_can_error_frames_);
+            }
+            else if (backend == "mab")
+            {
+                auto mab_can = std::make_shared<cubemars::MabFdCan>(
+                    can_interface_name,
+                    this->get_parameter("enable_loopback").as_bool(),
+                    joint_configs_per_can_interface[can_interface_id],
+                    this->get_parameter("can_socket_timeout_sec").as_int(),
+                    this->get_parameter("can_socket_timeout_usec").as_int(),
+                    this->get_parameter("can_initial_connection_trials").as_int(),
+                    enable_tx_timestamping_,
+                    enable_can_error_frames_);
+                // Instead of a blind post-power-cycle sleep: actively poll every motor's QuickStatus
+                // at 10 Hz for up to 3s and require every reading to be fault-free before proceeding.
+                RCLCPP_INFO(this->get_logger(), "CAN interface '%s': polling QuickStatus on all motors for up to 3s before configuring...",
+                            can_interface_name.c_str());
+                mab_can->wait_for_healthy_quick_status();
+                can_interfaces_[can_interface_id] = mab_can;
+            }
+            else
+            {
+                throw cubemars::can_interface_error(
+                    "Unknown comm_backend '" + backend + "' for interface '" + can_interface_name +
+                    "'. Valid values: 'cubemars', 'mab'.");
+            }
         }
 
         // Goes to default callback group
@@ -299,19 +442,11 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // Create subscriber
         joint_cmd_sub_ = this->create_subscription<robot_control_msgs::msg::JointCommand>("~/joint_commands", QOS_BEST_EFFORT_NO_DEPTH, std::bind(&CubeMarsHardwareNode::joint_cmd_msg_callback, this, std::placeholders::_1));
 
-        // Create services
-        set_all_motors_origin_here_srv_ = this->create_service<std_srvs::srv::Trigger>(
-            "set_all_motors_origin_here",
-            std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
-        set_motor_origin_here_srv_ = this->create_service<robot_control_msgs::srv::SetMotorOriginHere>(
-            "set_motor_origin_here",
-            std::bind(&CubeMarsHardwareNode::set_motor_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
-
         // Now create can devices and callback
         bool failure = false;
         std::string error_string = "";
         for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-        { 
+        {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 try // We catch this to actually now which all are missing and if it is a bus problem or a motor problem
@@ -328,12 +463,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         }
 
         if(failure){
-        
+
                 // Notify users
                 RCLCPP_ERROR(this->get_logger(), "Device error while enabling motor: \n %s", error_string.c_str());
                 RCLCPP_WARN(this->get_logger(), "Try to disable motors, might not work");
                 for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-                { 
+                {
                 for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
                     {
                      try
@@ -349,7 +484,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 can_interfaces_.clear();
                 return LifecycleNodeInterface::CallbackReturn::ERROR;
         }
-        
+
         // Register runtime parameter callback now that all per-joint state is in place
         on_set_parameters_handle_ = this->add_on_set_parameters_callback(
             std::bind(&CubeMarsHardwareNode::on_set_parameters_callback, this, std::placeholders::_1));
@@ -382,13 +517,21 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         can_interfaces_.clear();
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
+    catch (cubemars::can_device_error &exception)
+    {
+        // Thrown by wait_for_healthy_quick_status() if a motor reports a fault (or doesn't reply)
+        // before any motor has been activated yet, so just deactivating the interfaces is enough.
+        RCLCPP_ERROR(this->get_logger(), "A motor reported a problem before configuring: %s", exception.what());
+        can_interfaces_.clear();
+        return LifecycleNodeInterface::CallbackReturn::ERROR;
+    }
 
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_unused]] const rclcpp_lifecycle::State &previous_state)
 {
-    RCLCPP_WARN(this->get_logger(), "Cleaning up");
+    RCLCPP_INFO(this->get_logger(), "Cleaning up Cubemars hardware node");
     // Unregister parameter callback first so it cannot fire during teardown
     on_set_parameters_handle_.reset();
     // Stop all timers and comm threads. Joining the comm threads BEFORE taking the mutexes is
@@ -474,6 +617,10 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     unfiltered_velocity_msg_.data.clear();
     unfiltered_position_pub_.reset();
     unfiltered_position_msg_.data.clear();
+    output_encoder_position_pub_.reset();
+    output_encoder_position_msg_.data.clear();
+    output_encoder_velocity_pub_.reset();
+    output_encoder_velocity_msg_.data.clear();
     last_can_cycle_times_.clear();
     joint_state_msg_mutex_.unlock();
     can_communication_mutex_.unlock();
@@ -482,8 +629,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_state_msg_.velocity.clear();
     joint_state_msg_.effort.clear();
     joint_temp_msg_.data.clear();
-    set_all_motors_origin_here_srv_.reset();
-    set_motor_origin_here_srv_.reset();
+    // set_all_motors_origin_here_srv_/set_motor_origin_here_srv_ deliberately survive cleanup: they
+    // must stay callable in UNCONFIGURED for MAB's zero+save-to-flash path.
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_pub_.reset();
@@ -494,7 +641,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     }
     // Always return success, since then the driver is unconfigured(). And from there we can try to start over again.
     (void)success;
-    RCLCPP_WARN(this->get_logger(), "Clean up done ok");
+    RCLCPP_INFO(this->get_logger(), "Clean up done");
     return LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
 
@@ -585,6 +732,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         controller_latency_pub_.reset();
         unfiltered_velocity_pub_.reset();
         unfiltered_position_pub_.reset();
+        output_encoder_position_pub_.reset();
+        output_encoder_velocity_pub_.reset();
         can_interfaces_names_.clear();
         stop_all_comm_threads(); // join any comm threads started before configure() failed
         comm_threads_.clear();
@@ -619,8 +768,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         joint_rx_hw_base_ns_.clear();
         unfiltered_velocity_msg_.data.clear();
         unfiltered_position_msg_.data.clear();
-        set_all_motors_origin_here_srv_.reset();
-        set_motor_origin_here_srv_.reset();
+        output_encoder_position_msg_.data.clear();
+        output_encoder_velocity_msg_.data.clear();
+        // origin_here_joint_info_ may hold a partial set built before this failed configure()
+        // attempt; drop it rather than leave stale/incomplete entries around. The services
+        // themselves are NOT reset here: they must stay callable in UNCONFIGURED.
+        origin_here_joint_info_.clear();
         if (publish_ros2_joint_state_)
         {
             ros2_joint_state_pub_.reset();
@@ -629,7 +782,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
             ros2_joint_state_msg_.effort.clear();
             ros2_joint_state_msg_.name.clear();
         }
-        RCLCPP_INFO(this->get_logger(), "Handling error in PRIMARY_STATE_UNCONFIGURED sucessfull");
+        //RCLCPP_INFO(this->get_logger(), "Handling error in PRIMARY_STATE_UNCONFIGURED sucessfull");
         break;
     case lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE:
         // Assumption: Something went wrong during activate() or cleanup()
@@ -714,6 +867,8 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     joint_rx_hw_timestamp_msg_to_pub_ = joint_rx_hw_timestamp_msg_;
     unfiltered_velocity_msg_to_pub_ = unfiltered_velocity_msg_;
     unfiltered_position_msg_to_pub_ = unfiltered_position_msg_;
+    output_encoder_position_msg_to_pub_ = output_encoder_position_msg_;
+    output_encoder_velocity_msg_to_pub_ = output_encoder_velocity_msg_;
     // Stamp with the oldest successful reply currently in the message: a conservative
     // freshness bound (every joint value is no older than `stamp`). The kernel RX timestamp
     // (SO_TIMESTAMPNS, CLOCK_REALTIME ns) shares the epoch with ROS SYSTEM_TIME.
@@ -758,6 +913,8 @@ void CubeMarsHardwareNode::joint_state_publish_callback()
     }
     unfiltered_velocity_pub_->publish(unfiltered_velocity_msg_to_pub_);
     unfiltered_position_pub_->publish(unfiltered_position_msg_to_pub_);
+    output_encoder_position_pub_->publish(output_encoder_position_msg_to_pub_);
+    output_encoder_velocity_pub_->publish(output_encoder_velocity_msg_to_pub_);
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_msg_.position = joint_state_msg_to_pub_.position;
@@ -884,7 +1041,8 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         joint_cmds[i].torque = cmd->effort[joint_params[i].msg_idx];
     }
 
-    if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
+    const bool is_active = this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE;
+    if (is_active)
     {
         // friction model
         for (unsigned int i = 0; i < joint_cmds.size(); i++)
@@ -918,7 +1076,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_communication_mutex_.lock_shared();
     try
     {
-        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states);
+        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states, is_active);
         can_communication_mutex_.unlock_shared();
     }
     catch (const std::exception &e)
@@ -1063,11 +1221,18 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
                 unfiltered_vel_motor_space[i] / joint_params[i].transmission_ratio;
             unfiltered_position_msg_.data[joint_params[i].msg_idx] =
                 unfiltered_pos_motor_space[i] / joint_params[i].transmission_ratio + joint_params[i].zero_position;
+            // Debug-only: raw output-side encoder, already on the joint side of the gearbox, so no
+            // transmission_ratio scaling. NaN when the driver/joint has no output encoder.
+            output_encoder_position_msg_.data[joint_params[i].msg_idx] =
+                joint_states[i].output_encoder_pos + joint_params[i].zero_position;
+            output_encoder_velocity_msg_.data[joint_params[i].msg_idx] = joint_states[i].output_encoder_vel;
         }
         else
         {
             unfiltered_velocity_msg_.data[joint_params[i].msg_idx] = std::nanf("");
             unfiltered_position_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+            output_encoder_position_msg_.data[joint_params[i].msg_idx] = std::nanf("");
+            output_encoder_velocity_msg_.data[joint_params[i].msg_idx] = std::nanf("");
         }
     }
 
@@ -1216,7 +1381,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         }
     }
 
-    
+
 
     can_interface_frequency_msg_.data[can_interface_idx] = can_cyle_frequency;
     int64_t tx_fill_ns = can_interfaces_[can_interface_idx]->get_tx_fill_duration_ns();
@@ -1248,102 +1413,162 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     }
 }
 
+bool CubeMarsHardwareNode::origin_here_state_ok(const OriginHereJointInfo &info, std::string &required_state_out) const
+{
+    if (info.backend == "mab")
+    {
+        required_state_out = "UNCONFIGURED";
+        return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED;
+    }
+    required_state_out = "INACTIVE (configured)";
+    return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE;
+}
+
+void CubeMarsHardwareNode::zero_mab_joint_standalone(const OriginHereJointInfo &info)
+{
+    cubemars::joint_config_t joint_config;
+    joint_config.can_id = info.can_id;
+    joint_config.series_type = info.series_type;
+    joint_config.reply_on_own_id = info.reply_on_own_id;
+    joint_config.name = info.name;
+
+    cubemars::MabFdCan tmp_connection(
+        info.can_interface_name,
+        this->get_parameter("enable_loopback").as_bool(),
+        std::vector<cubemars::joint_config_t>{joint_config},
+        this->get_parameter("can_socket_timeout_sec").as_int(),
+        this->get_parameter("can_socket_timeout_usec").as_int(),
+        this->get_parameter("can_initial_connection_trials").as_int(),
+        enable_tx_timestamping_,
+        enable_can_error_frames_);
+    tmp_connection.set_zero_position(0);
+}
+
 void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                                                std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
     (void)request;
-    if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    if (origin_here_joint_info_.empty())
     {
-        RCLCPP_ERROR(this->get_logger(), "Cannot set all motors origin here, node not in CONFIGURED state");
-
+        RCLCPP_ERROR(this->get_logger(), "Cannot set all motors origin here: node has never been configured");
         response->success = false;
-        response->message = "Node not in CONFIGURED state";
+        response->message = "Node has never been configured";
         return;
     }
-    // Pause all comm threads (join) before grabbing the bus exclusively for calibration.
-    stop_all_comm_threads();
-    can_communication_mutex_.lock();
 
-    for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+    // Each joint's backend dictates which lifecycle state its zero+save actually takes effect in:
+    // MAB only persists a set-zero to flash while the node is UNCONFIGURED (motor disabled, no
+    // live CAN connection held by this node); CubeMars needs INACTIVE (configured, motor enabled),
+    // as it always has. Fail fast on the first mismatch rather than partially zeroing some motors.
+    for (const auto &info : origin_here_joint_info_)
     {
-        try
+        std::string required_state;
+        if (!origin_here_state_ok(info, required_state))
         {
-            for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
-            {
-                RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
-                can_interfaces_[i]->end_motor_control_mode(j);
-                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
-                can_interfaces_[i]->start_motor_control_mode(j, true);
-                RCLCPP_INFO(this->get_logger(), "Succesfully set orgin and re-activated joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
-            }
+            RCLCPP_ERROR(this->get_logger(), "Cannot set all motors origin here: joint %s (backend '%s') requires the node to be %s, but it is %s",
+                         info.name.c_str(), info.backend.c_str(), required_state.c_str(), get_current_state().label().c_str());
+            response->success = false;
+            response->message = "Joint " + info.name + " (" + info.backend + ") requires the node to be " + required_state +
+                                 ", but it is " + get_current_state().label();
+            return;
         }
-        catch (const std::exception &e)
+    }
+
+    if (get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    {
+        // Configured: motors are enabled and reachable through the live can_interfaces_.
+        // Pause all comm threads (join) before grabbing the bus exclusively for calibration.
+        stop_all_comm_threads();
+        can_communication_mutex_.lock();
+
+        for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
-            // Notidy users
-            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[i]->GetName().c_str(), e.what());
-            // This can only happen when actual motors are enabled, hence try to disable motors
             try
             {
-                for (unsigned int i_o = 0; i_o <= can_interfaces_.size(); i_o++)
+                for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
                 {
-                    // Enable all motors
-                    can_interfaces_[i_o]->end_motor_control_mode();
+                    // Zero the motor in place (like the standalone calibration script): a single
+                    // set-zero command while the motor stays enabled, no disable/re-enable cycle.
+                    RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
+                    can_interfaces_[i]->set_zero_position(j);
+                    RCLCPP_INFO(this->get_logger(), "Succesfully set orgin on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
                 }
-                can_interfaces_.clear();
             }
             catch (const std::exception &e)
             {
-                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s during deactivation occured, be carefull with still active motors: %s", can_interfaces_[i]->GetName().c_str(), e.what());
+                // Notidy users
+                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[i]->GetName().c_str(), e.what());
+                // This can only happen when actual motors are enabled, hence try to disable motors
+                try
+                {
+                    for (unsigned int i_o = 0; i_o < can_interfaces_.size(); i_o++)
+                    {
+                        // Disable all motors
+                        can_interfaces_[i_o]->end_motor_control_mode();
+                    }
+                    can_interfaces_.clear();
+                }
+                catch (const std::exception &e_inner)
+                {
+                    RCLCPP_ERROR(this->get_logger(), "Device error during emergency deactivation, be carefull with still active motors: %s", e_inner.what());
+                }
+                can_communication_mutex_.unlock();
+                response->success = false;
+                response->message = "Error in CAN communication, see log";
+                cleanup();
+                return;
             }
-            can_communication_mutex_.unlock();
+        }
+        // Resume the comm threads after calibration (skipped if cleanup() emptied can_interfaces_).
+        for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+        {
+            start_comm_thread(i);
+        }
+        response->success = true;
+        response->message = "All motors set to origin";
+        can_communication_mutex_.unlock();
+        return;
+    }
+
+    // PRIMARY_STATE_UNCONFIGURED: every joint above was validated as MAB. can_interfaces_ has
+    // already been torn down here, so zero each joint through its own throwaway connection.
+    for (const auto &info : origin_here_joint_info_)
+    {
+        try
+        {
+            RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i, standalone MAB connection)",
+                        info.name.c_str(), info.can_interface_name.c_str(), info.can_id);
+            zero_mab_joint_standalone(info);
+            RCLCPP_INFO(this->get_logger(), "Succesfully set origin on joint %s", info.name.c_str());
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Device error on can_interface %s occured while setting origin: %s", info.can_interface_name.c_str(), e.what());
             response->success = false;
             response->message = "Error in CAN communication, see log";
-            cleanup();
+            return;
         }
-    }
-    // Resume the comm threads after calibration (skipped if cleanup() emptied can_interfaces_).
-    for (unsigned int i = 0; i < can_interfaces_.size(); i++)
-    {
-        start_comm_thread(i);
     }
     response->success = true;
     response->message = "All motors set to origin";
-    can_communication_mutex_.unlock();
 }
 
 void CubeMarsHardwareNode::set_motor_origin_here_callback(
     const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,
     std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Response> response)
 {
-    if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    // origin_here_joint_info_ (unlike joint_parameters_per_can_interface_) survives cleanup, so
+    // this lookup works regardless of lifecycle state.
+    const OriginHereJointInfo *target = nullptr;
+    for (const auto &info : origin_here_joint_info_)
     {
-        RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin here, node not in CONFIGURED state");
-        response->success = false;
-        response->message = "Node not in CONFIGURED state";
-        return;
-    }
-
-    // Find which can_interface and joint index corresponds to the given motor_id (msg_idx)
-    int target_can_interface_id = -1;
-    unsigned int target_joint_idx = 0;
-    for (unsigned int i = 0; i < joint_parameters_per_can_interface_.size(); i++)
-    {
-        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
+        if (info.msg_idx == static_cast<unsigned int>(request->motor_id))
         {
-            if (joint_parameters_per_can_interface_[i][j].msg_idx == static_cast<unsigned int>(request->motor_id))
-            {
-                target_can_interface_id = static_cast<int>(i);
-                target_joint_idx = j;
-                break;
-            }
-        }
-        if (target_can_interface_id != -1)
-        {
+            target = &info;
             break;
         }
     }
-
-    if (target_can_interface_id == -1)
+    if (!target)
     {
         RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin: motor_id %i not found", request->motor_id);
         response->success = false;
@@ -1351,64 +1576,115 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
         return;
     }
 
-    unsigned int iface = static_cast<unsigned int>(target_can_interface_id);
-
-    // Pause the comm thread for the target interface (join) before grabbing the bus.
-    stop_comm_thread(iface);
-
-    can_communication_mutex_.lock();
-
-    try
+    std::string required_state;
+    if (!origin_here_state_ok(*target, required_state))
     {
-        // Turn off all motors on this CAN interface
-        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[iface].size(); j++)
-        {
-            RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
-            can_interfaces_[iface]->end_motor_control_mode(j);
-        }
-        // Re-enable all motors; set zero position only for the target joint
-        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[iface].size(); j++)
-        {
-            bool set_zero = (j == target_joint_idx);
-            if (set_zero)
-            {
-                RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
-            }
-            can_interfaces_[iface]->start_motor_control_mode(j, set_zero);
-            RCLCPP_INFO(this->get_logger(), "Succesfully %s joint %s (can_interface %s, can id %i)",
-                        set_zero ? "set origin and re-activated" : "re-activated",
-                        joint_parameters_per_can_interface_[iface][j].name.c_str(),
-                        can_interfaces_[iface]->GetName().c_str(),
-                        can_interfaces_[iface]->get_can_id(j));
-        }
-    }
-    catch (const std::exception &e)
-    {
-        RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[iface]->GetName().c_str(), e.what());
-        try
-        {
-            for (unsigned int i_o = 0; i_o < can_interfaces_.size(); i_o++)
-            {
-                can_interfaces_[i_o]->end_motor_control_mode();
-            }
-            can_interfaces_.clear();
-        }
-        catch (const std::exception &e_inner)
-        {
-            RCLCPP_ERROR(this->get_logger(), "Device error during emergency deactivation, be carefull with still active motors: %s", e_inner.what());
-        }
-        can_communication_mutex_.unlock();
+        RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin here: joint %s (backend '%s') requires the node to be %s, but it is %s",
+                     target->name.c_str(), target->backend.c_str(), required_state.c_str(), get_current_state().label().c_str());
         response->success = false;
-        response->message = "Error in CAN communication, see log";
-        cleanup();
+        response->message = "Joint " + target->name + " (" + target->backend + ") requires the node to be " + required_state +
+                             ", but it is " + get_current_state().label();
         return;
     }
 
-    // Resume the comm thread for the target interface.
-    start_comm_thread(iface);
+    if (get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+    {
+        // Configured: find which can_interface/joint slot in the live can_interfaces_ this is.
+        int target_can_interface_id = -1;
+        unsigned int target_joint_idx = 0;
+        for (unsigned int i = 0; i < joint_parameters_per_can_interface_.size(); i++)
+        {
+            for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
+            {
+                if (joint_parameters_per_can_interface_[i][j].msg_idx == static_cast<unsigned int>(request->motor_id))
+                {
+                    target_can_interface_id = static_cast<int>(i);
+                    target_joint_idx = j;
+                    break;
+                }
+            }
+            if (target_can_interface_id != -1)
+            {
+                break;
+            }
+        }
+        if (target_can_interface_id == -1)
+        {
+            // Shouldn't happen (origin_here_joint_info_ and joint_parameters_per_can_interface_ are
+            // rebuilt together in on_configure()), but fail safely rather than dereference garbage.
+            RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin: motor_id %i not found in the live configuration", request->motor_id);
+            response->success = false;
+            response->message = "Motor ID " + std::to_string(request->motor_id) + " not found in the live configuration";
+            return;
+        }
+
+        unsigned int iface = static_cast<unsigned int>(target_can_interface_id);
+
+        // Pause the comm thread for the target interface (join) before grabbing the bus.
+        stop_comm_thread(iface);
+
+        can_communication_mutex_.lock();
+
+        try
+        {
+            // Zero the target motor in place (like the standalone calibration script): a single
+            // set-zero command while the motor stays enabled, no disable/re-enable cycle and no
+            // touching of the other motors on this interface.
+            RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][target_joint_idx].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(target_joint_idx));
+            can_interfaces_[iface]->set_zero_position(target_joint_idx);
+            RCLCPP_INFO(this->get_logger(), "Succesfully set orgin on joint %s (can_interface %s, can id %i)",
+                        joint_parameters_per_can_interface_[iface][target_joint_idx].name.c_str(),
+                        can_interfaces_[iface]->GetName().c_str(),
+                        can_interfaces_[iface]->get_can_id(target_joint_idx));
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[iface]->GetName().c_str(), e.what());
+            try
+            {
+                for (unsigned int i_o = 0; i_o < can_interfaces_.size(); i_o++)
+                {
+                    can_interfaces_[i_o]->end_motor_control_mode();
+                }
+                can_interfaces_.clear();
+            }
+            catch (const std::exception &e_inner)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Device error during emergency deactivation, be carefull with still active motors: %s", e_inner.what());
+            }
+            can_communication_mutex_.unlock();
+            response->success = false;
+            response->message = "Error in CAN communication, see log";
+            cleanup();
+            return;
+        }
+
+        // Resume the comm thread for the target interface.
+        start_comm_thread(iface);
+        response->success = true;
+        response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
+        can_communication_mutex_.unlock();
+        return;
+    }
+
+    // PRIMARY_STATE_UNCONFIGURED: target was validated as MAB above; can_interfaces_ no longer
+    // exists, so zero it through its own throwaway connection.
+    try
+    {
+        RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i, standalone MAB connection)",
+                    target->name.c_str(), target->can_interface_name.c_str(), target->can_id);
+        zero_mab_joint_standalone(*target);
+        RCLCPP_INFO(this->get_logger(), "Succesfully set origin on joint %s", target->name.c_str());
+    }
+    catch (const std::exception &e)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Device error on can_interface %s occured while setting origin: %s", target->can_interface_name.c_str(), e.what());
+        response->success = false;
+        response->message = "Error in CAN communication, see log";
+        return;
+    }
     response->success = true;
-    response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
-    can_communication_mutex_.unlock();
+    response->message = "Motor " + std::to_string(request->motor_id) + " (" + target->name + ") set to origin";
 }
 
 bool CubeMarsHardwareNode::parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const
