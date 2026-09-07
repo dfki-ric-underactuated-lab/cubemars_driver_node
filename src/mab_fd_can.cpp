@@ -438,7 +438,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id)
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
     // Sleep for 100ms as the MAB controller can be slow to respond to the motion mode command, especially after power-up.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));
     memset(&recv_frame_.data, 0, sizeof(MotorMode_Message));
     int mm_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (mm_nbytes <= 0)
@@ -469,7 +469,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id)
         throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
     }
     // Sleep for 100ms as the MAB controller can be slow to respond to the enable command, especially after power-up.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));
     memset(&recv_frame_.data, 0, sizeof(MotorState_Message));
     int ms_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
     if (ms_nbytes <= 0)
