@@ -706,7 +706,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_shutdown(const r
 
 LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclcpp_lifecycle::State &previous_state)
 {
-    RCLCPP_WARN(this->get_logger(), "Error handling from previous state %s", previous_state.label().c_str());
     switch (previous_state.id())
     {
     case lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED:
