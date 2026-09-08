@@ -378,7 +378,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id)
 
     // (2) Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
     // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
-    QuickStatus_Message qs_req;
+    /*QuickStatus_Message qs_req;
     send_frame_.can_id = can_id;
     send_frame_.len = sizeof(QuickStatus_Message);
     std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
@@ -408,7 +408,7 @@ void MabFdCan::send_config_frames(const canid_t &can_id)
     {
         throw can_device_error(std::format("Motor with can_id {} reports {} before activation (Quick Status 0x{:04X})",
                                             can_id, errorFlagToString(qs_fault), quick_status));
-    }
+    }*/
 
     // (3) Send motion mode: Impedance
     // MotionMode_Message/MotorState_Message use frame_id WRITE_REGISTER, so the reply mirrors the
