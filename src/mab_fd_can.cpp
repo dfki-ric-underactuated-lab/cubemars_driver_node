@@ -547,7 +547,7 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
         std::memcpy(send_frame_.data, &zm, sizeof(RunZero_Message));
         if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
         {
-            throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+            throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(joint_configs_[joint_id].can_id), std::string(strerror(errno))));
         }
         // Wait for this motor's acknowledgement, skipping stale replies from other motors that may
         // still trickle in from the last cyclic cycle.
@@ -557,9 +557,9 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
             int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
             if (nbytes <= 0)
             {
-                throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+                throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(joint_configs_[joint_id].can_id), std::string(strerror(errno))));
             }
-            if (recv_frame_.can_id == can_id)
+            if (recv_frame_.can_id == joint_configs_[joint_id].can_id)
             {
                 return;
             }
