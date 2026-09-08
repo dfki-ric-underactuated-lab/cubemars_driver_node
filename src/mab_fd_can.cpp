@@ -504,7 +504,7 @@ void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_pos
     {
         try
         {
-            send_config_frames(joint_configs_[joint_id].can_id);
+            enable_motor(joint_configs_[joint_id].can_id);
             success = true;
         }
         catch (const can_device_error &e)
