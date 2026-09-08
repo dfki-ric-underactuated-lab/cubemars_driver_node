@@ -394,8 +394,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             const std::string backend_param = "can_backends." + can_interface_name;
             this->declare_parameter_if_undeclared(backend_param, comm_backend_default);
             const std::string backend = this->get_parameter(backend_param).as_string();
-            RCLCPP_INFO(this->get_logger(), "CAN interface '%s': selected comm backend '%s'",
-                        can_interface_name.c_str(), backend.c_str());
+            /*RCLCPP_INFO(this->get_logger(), "CAN interface '%s': selected comm backend '%s'",
+                        can_interface_name.c_str(), backend.c_str());*/
 
             if (backend == "cubemars")
             {
@@ -424,7 +424,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     enable_can_error_frames_);
                 // Instead of a blind post-power-cycle sleep: actively poll every motor's QuickStatus
                 // at 10 Hz for up to 3s and require every reading to be fault-free before proceeding.
-                RCLCPP_INFO(this->get_logger(), "CAN interface '%s': polling QuickStatus on all motors for up to 3s before configuring...",
+                RCLCPP_INFO(this->get_logger(), "CAN interface '%s': waiting for QuickStatus on all motors for 3s ... ",
                             can_interface_name.c_str());
                 mab_can->wait_for_healthy_quick_status();
                 can_interfaces_[can_interface_id] = mab_can;
@@ -505,14 +505,12 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     }
     catch (rclcpp::exceptions::ParameterUninitializedException &exception)
     {
-        // Notify user
-        RCLCPP_ERROR(this->get_logger(), "A nececarry parameter is not set: %s", exception.what());
+        RCLCPP_ERROR(this->get_logger(), "Parameter is not set: %s", exception.what());
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
     catch (cubemars::can_interface_error &exception)
     {
-        // Notidy users
-        RCLCPP_ERROR(this->get_logger(), "A CAN communication error occured: %s", exception.what());
+        RCLCPP_ERROR(this->get_logger(), "A CAN communication error: %s", exception.what());
         // This only happens during CAN creation, hence it should be enough to just deactivate the interfaces
         can_interfaces_.clear();
         return LifecycleNodeInterface::CallbackReturn::ERROR;
@@ -521,7 +519,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     {
         // Thrown by wait_for_healthy_quick_status() if a motor reports a fault (or doesn't reply)
         // before any motor has been activated yet, so just deactivating the interfaces is enough.
-        RCLCPP_ERROR(this->get_logger(), "A motor reported a problem before configuring: %s", exception.what());
+        RCLCPP_ERROR(this->get_logger(), "%s", exception.what());
         can_interfaces_.clear();
         return LifecycleNodeInterface::CallbackReturn::ERROR;
     }
@@ -990,7 +988,7 @@ void CubeMarsHardwareNode::supervisor_callback()
     // executor thread performs the transition.
     if (cleanup_requested_.exchange(false))
     {
-        RCLCPP_ERROR(this->get_logger(), "Comm thread requested cleanup after a fatal error; cleaning up");
+        RCLCPP_ERROR(this->get_logger(), "Comm thread requested cleanup after a fatal error");
         cleanup();
     }
 }
@@ -1093,7 +1091,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         else
         {
             // TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
-            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() motors into OFF (can process %i)", can_interface_idx);
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() (can process %i)", can_interface_idx);
             cleanup_requested_.store(true); // supervisor (executor thread) runs cleanup(); a comm thread must not join itself
             return;
         }
@@ -1141,14 +1139,14 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
         if (this->get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
         {
             // Try to go into damping
-            RCLCPP_WARN(this->get_logger(), "For safety reasons deactivate() motors into DAMPING");
+            RCLCPP_WARN(this->get_logger(), "For safety reasons deactivating all motors");
             deactivate();
             return;
         }
         else
         {
             // TODO: would make sense to keep damping active it is not all motors that lost comms, but for spmilcity we unconfigure here
-            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() motors into OFF (can process %i)", can_interface_idx);
+            RCLCPP_ERROR(this->get_logger(), "For safety reasons requesting cleanup() (can process %i)", can_interface_idx);
             cleanup_requested_.store(true); // supervisor (executor thread) runs cleanup(); a comm thread must not join itself
             return;
         }
