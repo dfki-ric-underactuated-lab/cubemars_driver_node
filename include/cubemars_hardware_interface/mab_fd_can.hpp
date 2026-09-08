@@ -249,8 +249,7 @@ namespace cubemars
     private:
         // Enable/disable a motor by writing the mode + state registers (with a read-back acknowledgement),
         // and zero a motor by writing the RunZero register.
-        void send_config_frames(const canid_t &can_id);
-        void send_zero_frame(const canid_t &can_id, RunZero_Message zm);
+        void enable_motor(const canid_t &can_id);
         // Write a single MAB register-protocol message and confirm the motor's acknowledgement
         // (matching can_id reply); throws can_device_error if none arrives.
         void send_register_command(const canid_t &can_id, const void *msg, uint8_t msg_len);

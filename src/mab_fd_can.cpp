@@ -362,7 +362,7 @@ void MabFdCan::wait_for_healthy_quick_status(std::chrono::milliseconds wait_dura
     }
 }
 
-void MabFdCan::send_config_frames(const canid_t &can_id)
+void MabFdCan::enable_motor(const canid_t &can_id)
 {
     // (1) Zero out the PID gains before (re-)configuring the motion mode/state below, so the motor
     // doesn't briefly chase a stale impedance target left over from before this write.
@@ -487,32 +487,6 @@ void MabFdCan::flush_rx_queue()
     }
 }
 
-void MabFdCan::send_zero_frame(const canid_t &can_id, RunZero_Message zm)
-{
-    send_frame_.can_id = can_id;
-    send_frame_.len = sizeof(RunZero_Message);
-    std::memcpy(send_frame_.data, &zm, sizeof(RunZero_Message));
-    if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
-    {
-        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    // Wait for this motor's acknowledgement, skipping stale replies from other motors that may
-    // still trickle in from the last cyclic cycle.
-    while (true)
-    {
-        memset(&recv_frame_, 0, sizeof(recv_frame_));
-        int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
-        if (nbytes <= 0)
-        {
-            throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-        }
-        if (recv_frame_.can_id == can_id)
-        {
-            return;
-        }
-    }
-}
-
 void MabFdCan::start_motor_control_mode(unsigned int joint_id, bool set_zero_position_on_enable)
 {
     if (joint_id >= joint_configs_.size())
@@ -568,7 +542,28 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     {
         flush_rx_queue();
         RunZero_Message zm;
-        send_zero_frame(joint_configs_[joint_id].can_id, zm);
+        send_frame_.can_id = joint_configs_[joint_id].can_id;
+        send_frame_.len = sizeof(RunZero_Message);
+        std::memcpy(send_frame_.data, &zm, sizeof(RunZero_Message));
+        if (::write(can_socket_fd_, &send_frame_, sizeof(struct can_frame)) < 0)
+        {
+            throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+        }
+        // Wait for this motor's acknowledgement, skipping stale replies from other motors that may
+        // still trickle in from the last cyclic cycle.
+        while (true)
+        {
+            memset(&recv_frame_, 0, sizeof(recv_frame_));
+            int nbytes = ::read(can_socket_fd_, &recv_frame_, CAN_MTU);
+            if (nbytes <= 0)
+            {
+                throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
+            }
+            if (recv_frame_.can_id == can_id)
+            {
+                return;
+            }
+        }
 
         // Persist the new zero position (and any other pending register changes) to flash, so it
         // survives a power cycle. Mirrors save_motors.py's runSaveCmd write: send_register_command

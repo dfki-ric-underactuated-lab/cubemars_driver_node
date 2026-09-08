@@ -1671,7 +1671,7 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
         RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i, standalone MAB connection)",
                     target->name.c_str(), target->can_interface_name.c_str(), target->can_id);
         zero_mab_joint_standalone(*target);
-        RCLCPP_INFO(this->get_logger(), "Succesfully set origin on joint %s", target->name.c_str());
+        RCLCPP_INFO(this->get_logger(), "Successfully set origin on joint %s", target->name.c_str());
     }
     catch (const std::exception &e)
     {
