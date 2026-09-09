@@ -561,7 +561,7 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
             }
             if (recv_frame_.can_id == joint_configs_[joint_id].can_id)
             {
-                return;
+                break;
             }
         }
 
