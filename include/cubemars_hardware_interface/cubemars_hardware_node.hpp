@@ -8,6 +8,8 @@
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
+#include "cubemars_hardware_interface/can_comm_base.hpp"
+#include "cubemars_hardware_interface/mab_fd_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <atomic>
 #include <mutex>
@@ -120,6 +122,10 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_intercycle_gap_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
+    // Debug-only: raw output-side encoder position/velocity, NaN for joints/drivers without one
+    // (see joint_state_t::output_encoder_pos / output_encoder_vel).
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr output_encoder_position_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr output_encoder_velocity_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     // Round-trip controller latency: now - stamp of the incoming joint_cmd, in milliseconds.
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr controller_latency_pub_;
@@ -157,6 +163,8 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_;
+    std_msgs::msg::Float32MultiArray output_encoder_velocity_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
@@ -172,6 +180,8 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray output_encoder_velocity_msg_to_pub_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
@@ -180,6 +190,22 @@ private:
 
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr set_all_motors_origin_here_srv_;
     rclcpp::Service<robot_control_msgs::srv::SetMotorOriginHere>::SharedPtr set_motor_origin_here_srv_;
+
+    // Lightweight per-joint identity/addressing info for the origin-here services, populated in
+    // on_configure() but (unlike everything else) NOT cleared in on_cleanup(): MAB motors only
+    // persist a set-zero to flash while the node is UNCONFIGURED, at which point can_interfaces_
+    // has already been torn down, so the service opens its own one-shot connection from this.
+    struct OriginHereJointInfo
+    {
+        std::string name;
+        unsigned int msg_idx;
+        std::string can_interface_name;
+        std::string backend; // "mab" or "cubemars"
+        canid_t can_id;
+        cubemars::SERIES_TYPE series_type;
+        bool reply_on_own_id;
+    };
+    std::vector<OriginHereJointInfo> origin_here_joint_info_;
 
     double default_damping_KD_;
     double friction_compensation_sign_steepness_;
@@ -191,7 +217,10 @@ private:
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<unsigned int> num_can_errors_per_interfaces_;
-    std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
+    // Stored as the abstract backend type so the node can drive either electronics (CubeMars classic
+    // CAN or MAB FDCAN) through one pointer; the concrete type is chosen where the
+    // objects are constructed in on_configure.
+    std::vector<std::shared_ptr<cubemars::CanCommBase>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<int64_t> last_cycle_end_ns_per_can_interface_; // CLOCK_MONOTONIC end of the previous can_cycle_callback, for the inter-cycle gap
 
@@ -269,6 +298,11 @@ public:
     LifecycleNodeInterface::CallbackReturn on_error(const rclcpp_lifecycle::State &previous_state) override;
     LifecycleNodeInterface::CallbackReturn on_shutdown(const rclcpp_lifecycle::State &previous_state) override;
 
+    // Bounce the given CAN interface (down, reconfigure bitrate/dbitrate/fd/txqueuelen, up) so
+    // every on_configure() starts from a known-good link state instead of whatever a previous
+    // run (or a wedged controller) left it in. Throws can_interface_error on failure.
+    void reset_can_interface(const std::string &interface_name);
+
     void watchdog_timer_callback();
     void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand::ConstSharedPtr &joint_cmd_msg);
     void joint_state_publish_callback();
@@ -282,4 +316,12 @@ public:
                                              std::shared_ptr<std_srvs::srv::Trigger::Response> response);
     void set_motor_origin_here_callback(const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,
                                         std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Response> response);
+    // Whether the node's current lifecycle state is the one `info`'s backend requires for
+    // zero+save to actually take effect (MAB: UNCONFIGURED; CubeMars: INACTIVE). On failure,
+    // required_state_out is set to a human-readable label of what was required.
+    bool origin_here_state_ok(const OriginHereJointInfo &info, std::string &required_state_out) const;
+    // Zero (and flash-save) a single MAB joint while UNCONFIGURED, via a throwaway MabFdCan
+    // connection built straight from `info` and the node's parameters (can_interfaces_ no longer
+    // exists in this state). Throws can_device_error/can_interface_error on failure.
+    void zero_mab_joint_standalone(const OriginHereJointInfo &info);
 };
