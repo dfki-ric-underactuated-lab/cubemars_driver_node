@@ -542,6 +542,7 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
     {
         flush_rx_queue();
         RunZero_Message zm;
+        RCLCPP_INFO(rclcpp::get_logger("cubemars_hardware_node"), "Writing RunZero_Message to motor with can id %i",joint_configs_[joint_id].can_id);
         send_frame_.can_id = joint_configs_[joint_id].can_id;
         send_frame_.len = sizeof(RunZero_Message);
         std::memcpy(send_frame_.data, &zm, sizeof(RunZero_Message));
