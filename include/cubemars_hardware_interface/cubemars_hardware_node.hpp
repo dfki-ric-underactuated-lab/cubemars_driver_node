@@ -249,16 +249,6 @@ private:
     rcl_interfaces::msg::SetParametersResult on_set_parameters_callback(const std::vector<rclcpp::Parameter> &params);
     bool parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const;
 
-    template <typename T>
-    T declare_and_get_parameter(const std::string &name)
-    {
-        if (!this->has_parameter(name)) // To prevent exceptions due to double declaration
-        {
-            this->declare_parameter<T>(name);
-        }
-        this->get_parameter(name).get_value<T>();
-    }
-
     void declare_parameter_if_undeclared(const std::string &name, const rclcpp::ParameterType & type){
         if(!this->has_parameter(name)){
             this->declare_parameter(name, type);
