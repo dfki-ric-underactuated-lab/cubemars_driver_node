@@ -61,15 +61,6 @@ static std::string canErrorFrameToString(canid_t id)
 
 CubeMarsHardwareNode::CubeMarsHardwareNode() : rclcpp_lifecycle::LifecycleNode("cubemars_hardware_node")
 {
-    // Created once, for the node's whole lifetime (not per-configure): the origin-here services
-    // must stay available in every lifecycle state, since which state is actually valid for a given
-    // motor's zero+save depends on its backend (checked inside the callbacks themselves).
-    set_all_motors_origin_here_srv_ = this->create_service<std_srvs::srv::Trigger>(
-        "set_all_motors_origin_here",
-        std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
-    set_motor_origin_here_srv_ = this->create_service<robot_control_msgs::srv::SetMotorOriginHere>(
-        "set_motor_origin_here",
-        std::bind(&CubeMarsHardwareNode::set_motor_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
 }
 
 void CubeMarsHardwareNode::reset_can_interface(const std::string &interface_name)
@@ -301,10 +292,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
             ros2_joint_state_msg_.name.resize(max_msg_idx + 1, "");
         }
 
-        // Rebuilt fresh below; not cleared on cleanup, so a stale set from a previous configure()
-        // shouldn't linger if this configure() attempt fails partway through.
-        origin_here_joint_info_.clear();
-
         for (unsigned int i = 0; i < joint_names.size(); i++)
         {
             // Declare joint definitions
@@ -317,9 +304,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 
             const std::string origin_backend_param = "can_backends." + can_interface;
             this->declare_parameter_if_undeclared(origin_backend_param, comm_backend_default);
-            origin_here_joint_info_.push_back({joint_names[i], static_cast<unsigned int>(msg_idx), can_interface,
-                                                this->get_parameter(origin_backend_param).as_string(),
-                                                joint_config.can_id, joint_config.series_type, joint_config.reply_on_own_id});
             unsigned int vel_filter_size = this->get_parameter("joint_defintions." + joint_names[i] + ".vel_filter_size").as_int();
             auto vel_filter_type_str = this->get_parameter("joint_defintions." + joint_names[i] + ".vel_filter_type").as_string();
             VelFilterType vel_filter_type;
@@ -436,6 +420,14 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     "'. Valid values: 'cubemars', 'mab'.");
             }
         }
+
+        // Services for calibration and zeroing 
+        set_all_motors_origin_here_srv_ = this->create_service<std_srvs::srv::Trigger>(
+            "set_all_motors_origin_here",
+            std::bind(&CubeMarsHardwareNode::set_all_motors_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
+        set_motor_origin_here_srv_ = this->create_service<robot_control_msgs::srv::SetMotorOriginHere>(
+            "set_motor_origin_here",
+            std::bind(&CubeMarsHardwareNode::set_motor_origin_here_callback, this, std::placeholders::_1, std::placeholders::_2));
 
         // Goes to default callback group
         publish_timer_ = this->create_timer(frequency_, std::bind(&CubeMarsHardwareNode::joint_state_publish_callback, this));
@@ -627,8 +619,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_cleanup([[maybe_
     joint_state_msg_.velocity.clear();
     joint_state_msg_.effort.clear();
     joint_temp_msg_.data.clear();
-    // set_all_motors_origin_here_srv_/set_motor_origin_here_srv_ deliberately survive cleanup: they
-    // must stay callable in UNCONFIGURED for MAB's zero+save-to-flash path.
+    set_all_motors_origin_here_srv_.reset();
+    set_motor_origin_here_srv_.reset();    
     if (publish_ros2_joint_state_)
     {
         ros2_joint_state_pub_.reset();
@@ -767,10 +759,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_error(const rclc
         unfiltered_position_msg_.data.clear();
         output_encoder_position_msg_.data.clear();
         output_encoder_velocity_msg_.data.clear();
-        // origin_here_joint_info_ may hold a partial set built before this failed configure()
-        // attempt; drop it rather than leave stale/incomplete entries around. The services
-        // themselves are NOT reset here: they must stay callable in UNCONFIGURED.
-        origin_here_joint_info_.clear();
+        set_all_motors_origin_here_srv_.reset();
+        set_motor_origin_here_srv_.reset();
         if (publish_ros2_joint_state_)
         {
             ros2_joint_state_pub_.reset();
@@ -1408,37 +1398,6 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
             "Software TX timestamp missing for %u replied joint(s) on %s (error-queue entries drained this cycle: %u)",
             tx_ts_missing, can_interfaces_[can_interface_idx]->GetName().c_str(), drained);
     }
-}
-
-bool CubeMarsHardwareNode::origin_here_state_ok(const OriginHereJointInfo &info, std::string &required_state_out) const
-{
-    if (info.backend == "mab")
-    {
-        required_state_out = "UNCONFIGURED";
-        return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_UNCONFIGURED;
-    }
-    required_state_out = "INACTIVE (configured)";
-    return get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE;
-}
-
-void CubeMarsHardwareNode::zero_mab_joint_standalone(const OriginHereJointInfo &info)
-{
-    cubemars::joint_config_t joint_config;
-    joint_config.can_id = info.can_id;
-    joint_config.series_type = info.series_type;
-    joint_config.reply_on_own_id = info.reply_on_own_id;
-    joint_config.name = info.name;
-
-    cubemars::MabFdCan tmp_connection(
-        info.can_interface_name,
-        this->get_parameter("enable_loopback").as_bool(),
-        std::vector<cubemars::joint_config_t>{joint_config},
-        this->get_parameter("can_socket_timeout_sec").as_int(),
-        this->get_parameter("can_socket_timeout_usec").as_int(),
-        this->get_parameter("can_initial_connection_trials").as_int(),
-        enable_tx_timestamping_,
-        enable_can_error_frames_);
-    tmp_connection.set_zero_position(0);
 }
 
 void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
