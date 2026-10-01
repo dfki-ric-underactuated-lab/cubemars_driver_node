@@ -1455,7 +1455,7 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
         // This can only happen when actual motors are enabled, hence try to disable motors
         try
         {
-            for (unsigned int i = 0; i <= can_interfaces_.size(); i++)
+            for (unsigned int i = 0; i < can_interfaces_.size(); i++)
             {
                 can_interfaces_[i]->end_motor_control_mode();
             }
