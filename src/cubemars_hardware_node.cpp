@@ -1425,7 +1425,7 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
-                can_interfaces_[i]->end_motor_control_mode();
+                can_interfaces_[i]->end_motor_control_mode(j);
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3000));
