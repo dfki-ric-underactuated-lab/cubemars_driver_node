@@ -122,7 +122,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     // picks "cubemars" or "mab" via can_backends.<interface>, defaulting to comm_backend_default.
     this->declare_parameter_if_undeclared("comm_backend_default", std::string("cubemars"));
 
-    std::set<std::string> can_interfaces_names_;
     std::unordered_map<std::string, std::set<int>> can_id_per_interface;
     std::set<int> msg_idxs;
     std::set<std::string> motor_types;
