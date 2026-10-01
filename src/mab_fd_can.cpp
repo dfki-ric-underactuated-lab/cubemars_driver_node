@@ -304,7 +304,7 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
                  register_id, static_cast<unsigned int>(can_id), nbytes);
 }
 
-void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point start_time, std::chrono::milliseconds wait_duration)
+void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point<std::chrono::steady_clock> start_time, std::chrono::milliseconds wait_duration)
 {
     constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
     const auto deadline = start_time + wait_duration;
