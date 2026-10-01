@@ -457,8 +457,6 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         }
 
         if(failure){
-
-                // Notify users
                 RCLCPP_ERROR(this->get_logger(), "Device error while enabling motor: \n %s", error_string.c_str());
                 RCLCPP_WARN(this->get_logger(), "Try to disable motors, might not work");
                 for (unsigned int i = 0; i < can_interfaces_.size(); i++)
@@ -1470,6 +1468,7 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
         response->success = false;
         response->message = "Error in CAN communication, see log";
         cleanup();
+        return;
     }
 
     // Resume the comm threads after calibration (skipped if cleanup() emptied can_interfaces_).
