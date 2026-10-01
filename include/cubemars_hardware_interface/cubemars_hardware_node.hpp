@@ -140,7 +140,7 @@ private:
     bool enable_tx_timestamping_; // software TX timestamps + the cmd_to_bus / motor_reply latency topics
     bool enable_can_error_frames_; // deliver + log CAN bus-error frames (bus-off, ACK errors, ...)
 
-    bool msg_received_;
+    std::atomic<bool> msg_received_{false};
 
 
     // Latest joint command, published lock-free by the subscriber and read by the comm threads.
