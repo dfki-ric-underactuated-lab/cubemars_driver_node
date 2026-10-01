@@ -1587,7 +1587,7 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
         for (unsigned int j = 0; j < joint_parameters_per_can_interface_[iface].size(); j++)
         {
             RCLCPP_INFO(this->get_logger(), "Enabling motor %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
-            can_interfaces_[iface]->start_motor_control_mode(j);
+            can_interfaces_[iface]->start_motor_control_mode(j, false);
             RCLCPP_INFO(this->get_logger(), "Succesfully set orgin and re-activated joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
         }
     }
