@@ -304,15 +304,15 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
                  register_id, static_cast<unsigned int>(can_id), nbytes);
 }
 
-void MabFdCan::wait_for_healthy_quick_status(std::chrono::milliseconds wait_duration)
+void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point start_time, std::chrono::milliseconds wait_duration)
 {
     constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
-    const auto deadline = std::chrono::steady_clock::now() + wait_duration;
+    const auto deadline = start_time + wait_duration;
     bool all_healthy = true;
     std::set<canid_t> unhealthy_can_ids;
     std::string last_issue;
 
-    while (std::chrono::steady_clock::now() < deadline)
+    do
     {
         for (const auto &cfg : joint_configs_)
         {
@@ -347,7 +347,7 @@ void MabFdCan::wait_for_healthy_quick_status(std::chrono::milliseconds wait_dura
             }
         }
         std::this_thread::sleep_for(poll_period);
-    }
+    }while (std::chrono::steady_clock::now() < deadline);
 
     if (!all_healthy)
     {

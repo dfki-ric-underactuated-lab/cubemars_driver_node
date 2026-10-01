@@ -188,7 +188,7 @@ namespace cubemars
         // just until the first fault), then throws can_device_error if any motor ever reported a
         // fault or failed to reply during that window - i.e. confirms every motor was healthy for
         // the *entire* wait, not just at a single point in time.
-        void wait_for_healthy_quick_status(std::chrono::milliseconds wait_duration = std::chrono::milliseconds(3000));
+        void wait_for_healthy_quick_status(std::chrono::time_point<std::chrono::steady_clock> start_time, std::chrono::milliseconds wait_duration = std::chrono::milliseconds(3000));
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 

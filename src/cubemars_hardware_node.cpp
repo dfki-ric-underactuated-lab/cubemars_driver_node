@@ -370,6 +370,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
         // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
 
+        auto start_time = std::chrono::steady_clock::now();
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
@@ -410,7 +411,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                 // at 10 Hz for up to 3s and require every reading to be fault-free before proceeding.
                 RCLCPP_INFO(this->get_logger(), "CAN interface '%s': waiting for QuickStatus on all motors for 3s ... ",
                             can_interface_name.c_str());
-                mab_can->wait_for_healthy_quick_status();
+                mab_can->wait_for_healthy_quick_status(start_time);
                 can_interfaces_[can_interface_id] = mab_can;
             }
             else
@@ -441,7 +442,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
-                try // We catch this to actually now which all are missing and if it is a bus problem or a motor problem
+                try // We catch this to actually know which joints are missing and if it is a bus problem or a motor problem
                 {
                     can_interfaces_[i]->start_motor_control_mode(j, joint_parameters_per_can_interface_[i][j].set_zero_position_on_startup);
                     RCLCPP_INFO(this->get_logger(), "Succesfully enabled motor on can_interface %s with can_id %i", can_interfaces_[i]->GetName().c_str(), joint_configs_per_can_interface[i][j].can_id);
