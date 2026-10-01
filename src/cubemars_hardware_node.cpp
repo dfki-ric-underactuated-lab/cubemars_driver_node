@@ -1457,23 +1457,30 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
     stop_all_comm_threads();
     can_communication_mutex_.lock();
 
-    for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+
+    try
     {
-        try
+        for (unsigned int i = 0; i < can_interfaces_.size(); i++)
         {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
-                can_interfaces_[i]->end_motor_control_mode(j);
+                can_interfaces_[i]->end_motor_control_mode();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+        {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 RCLCPP_INFO(this->get_logger(), "Setting zero position on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
                 can_interfaces_[i]->set_zero_position(j);
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-	    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+        {
             for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
             {
                 RCLCPP_INFO(this->get_logger(), "Enabling motor %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
@@ -1481,30 +1488,29 @@ void CubeMarsHardwareNode::set_all_motors_origin_here_callback(const std::shared
                 RCLCPP_INFO(this->get_logger(), "Succesfully set orgin and re-activated joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[i][j].name.c_str(), can_interfaces_[i]->GetName().c_str(), can_interfaces_[i]->get_can_id(j));
             }
         }
+    }
+    catch (const std::exception &e)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Device error occured while setting origin: %s", e.what());
+        // This can only happen when actual motors are enabled, hence try to disable motors
+        try
+        {
+            for (unsigned int i = 0; i <= can_interfaces_.size(); i++)
+            {
+                can_interfaces_[i]->end_motor_control_mode();
+            }
+            can_interfaces_.clear();
+        }
         catch (const std::exception &e)
         {
-            // Notidy users
-            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[i]->GetName().c_str(), e.what());
-            // This can only happen when actual motors are enabled, hence try to disable motors
-            try
-            {
-                for (unsigned int i_o = 0; i_o <= can_interfaces_.size(); i_o++)
-                {
-                    // Enable all motors
-                    can_interfaces_[i_o]->end_motor_control_mode();
-                }
-                can_interfaces_.clear();
-            }
-            catch (const std::exception &e)
-            {
-                RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s during deactivation occured, be carefull with still active motors: %s", can_interfaces_[i]->GetName().c_str(), e.what());
-            }
-            can_communication_mutex_.unlock();
-            response->success = false;
-            response->message = "Error in CAN communication, see log";
-            cleanup();
+            RCLCPP_ERROR(this->get_logger(), "Device error during deactivation occured, be carefull with still active motors: %s", e.what());
         }
+        can_communication_mutex_.unlock();
+        response->success = false;
+        response->message = "Error in CAN communication, see log";
+        cleanup();
     }
+
     // Resume the comm threads after calibration (skipped if cleanup() emptied can_interfaces_).
     for (unsigned int i = 0; i < can_interfaces_.size(); i++)
     {
@@ -1519,18 +1525,35 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
     const std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Request> request,
     std::shared_ptr<robot_control_msgs::srv::SetMotorOriginHere::Response> response)
 {
-    // origin_here_joint_info_ (unlike joint_parameters_per_can_interface_) survives cleanup, so
-    // this lookup works regardless of lifecycle state.
-    const OriginHereJointInfo *target = nullptr;
-    for (const auto &info : origin_here_joint_info_)
+    if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
     {
-        if (info.msg_idx == static_cast<unsigned int>(request->motor_id))
+        RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin here, node not in CONFIGURED state");
+        response->success = false;
+        response->message = "Node not in CONFIGURED state";
+        return;
+    }
+
+    // Find which can_interface and joint index corresponds to the given motor_id (msg_idx)
+    int target_can_interface_id = -1;
+    unsigned int target_joint_idx = 0;
+    for (unsigned int i = 0; i < joint_parameters_per_can_interface_.size(); i++)
+    {
+        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
         {
-            target = &info;
+            if (joint_parameters_per_can_interface_[i][j].msg_idx == static_cast<unsigned int>(request->motor_id))
+            {
+                target_can_interface_id = static_cast<int>(i);
+                target_joint_idx = j;
+                break;
+            }
+        }
+        if (target_can_interface_id != -1)
+        {
             break;
         }
     }
-    if (!target)
+
+    if (target_can_interface_id == -1)
     {
         RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin: motor_id %i not found", request->motor_id);
         response->success = false;
@@ -1538,115 +1561,63 @@ void CubeMarsHardwareNode::set_motor_origin_here_callback(
         return;
     }
 
-    std::string required_state;
-    if (!origin_here_state_ok(*target, required_state))
-    {
-        RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin here: joint %s (backend '%s') requires the node to be %s, but it is %s",
-                     target->name.c_str(), target->backend.c_str(), required_state.c_str(), get_current_state().label().c_str());
-        response->success = false;
-        response->message = "Joint " + target->name + " (" + target->backend + ") requires the node to be " + required_state +
-                             ", but it is " + get_current_state().label();
-        return;
-    }
+    unsigned int iface = static_cast<unsigned int>(target_can_interface_id);
 
-    if (get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
-    {
-        // Configured: find which can_interface/joint slot in the live can_interfaces_ this is.
-        int target_can_interface_id = -1;
-        unsigned int target_joint_idx = 0;
-        for (unsigned int i = 0; i < joint_parameters_per_can_interface_.size(); i++)
-        {
-            for (unsigned int j = 0; j < joint_parameters_per_can_interface_[i].size(); j++)
-            {
-                if (joint_parameters_per_can_interface_[i][j].msg_idx == static_cast<unsigned int>(request->motor_id))
-                {
-                    target_can_interface_id = static_cast<int>(i);
-                    target_joint_idx = j;
-                    break;
-                }
-            }
-            if (target_can_interface_id != -1)
-            {
-                break;
-            }
-        }
-        if (target_can_interface_id == -1)
-        {
-            // Shouldn't happen (origin_here_joint_info_ and joint_parameters_per_can_interface_ are
-            // rebuilt together in on_configure()), but fail safely rather than dereference garbage.
-            RCLCPP_ERROR(this->get_logger(), "Cannot set motor origin: motor_id %i not found in the live configuration", request->motor_id);
-            response->success = false;
-            response->message = "Motor ID " + std::to_string(request->motor_id) + " not found in the live configuration";
-            return;
-        }
+    // Pause the comm thread for the target interface (join) before grabbing the bus.
+    stop_comm_thread(iface);
 
-        unsigned int iface = static_cast<unsigned int>(target_can_interface_id);
+    can_communication_mutex_.lock();
 
-        // Pause the comm thread for the target interface (join) before grabbing the bus.
-        stop_comm_thread(iface);
-
-        can_communication_mutex_.lock();
-
-        try
-        {
-            // Zero the target motor in place (like the standalone calibration script): a single
-            // set-zero command while the motor stays enabled, no disable/re-enable cycle and no
-            // touching of the other motors on this interface.
-            RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][target_joint_idx].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(target_joint_idx));
-            can_interfaces_[iface]->set_zero_position(target_joint_idx);
-            RCLCPP_INFO(this->get_logger(), "Succesfully set orgin on joint %s (can_interface %s, can id %i)",
-                        joint_parameters_per_can_interface_[iface][target_joint_idx].name.c_str(),
-                        can_interfaces_[iface]->GetName().c_str(),
-                        can_interfaces_[iface]->get_can_id(target_joint_idx));
-        }
-        catch (const std::exception &e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[iface]->GetName().c_str(), e.what());
-            try
-            {
-                for (unsigned int i_o = 0; i_o < can_interfaces_.size(); i_o++)
-                {
-                    can_interfaces_[i_o]->end_motor_control_mode();
-                }
-                can_interfaces_.clear();
-            }
-            catch (const std::exception &e_inner)
-            {
-                RCLCPP_ERROR(this->get_logger(), "Device error during emergency deactivation, be carefull with still active motors: %s", e_inner.what());
-            }
-            can_communication_mutex_.unlock();
-            response->success = false;
-            response->message = "Error in CAN communication, see log";
-            cleanup();
-            return;
-        }
-
-        // Resume the comm thread for the target interface.
-        start_comm_thread(iface);
-        response->success = true;
-        response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
-        can_communication_mutex_.unlock();
-        return;
-    }
-
-    // PRIMARY_STATE_UNCONFIGURED: target was validated as MAB above; can_interfaces_ no longer
-    // exists, so zero it through its own throwaway connection.
     try
     {
-        RCLCPP_INFO(this->get_logger(), "Set origin here on joint %s (can_interface %s, can id %i, standalone MAB connection)",
-                    target->name.c_str(), target->can_interface_name.c_str(), target->can_id);
-        zero_mab_joint_standalone(*target);
-        RCLCPP_INFO(this->get_logger(), "Successfully set origin on joint %s", target->name.c_str());
+        // Turn off all motors on this CAN interface
+        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[iface].size(); j++)
+        {
+            RCLCPP_INFO(this->get_logger(), "Deactivate joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
+            can_interfaces_[iface]->end_motor_control_mode(j);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        
+        // Set zero position for the target joint
+        RCLCPP_INFO(this->get_logger(), "Setting zero position on joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][target_joint_idx].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(target_joint_idx));
+        can_interfaces_[iface]->set_zero_position(target_joint_idx);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        // Re-enable all motors
+        for (unsigned int j = 0; j < joint_parameters_per_can_interface_[iface].size(); j++)
+        {
+            RCLCPP_INFO(this->get_logger(), "Enabling motor %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
+            can_interfaces_[iface]->start_motor_control_mode(j);
+            RCLCPP_INFO(this->get_logger(), "Succesfully set orgin and re-activated joint %s (can_interface %s, can id %i)", joint_parameters_per_can_interface_[iface][j].name.c_str(), can_interfaces_[iface]->GetName().c_str(), can_interfaces_[iface]->get_can_id(j));
+        }
     }
     catch (const std::exception &e)
     {
-        RCLCPP_ERROR(this->get_logger(), "Device error on can_interface %s occured while setting origin: %s", target->can_interface_name.c_str(), e.what());
+        RCLCPP_ERROR(this->get_logger(), "Device error on CAN interface %s occured while setting origin: %s", can_interfaces_[iface]->GetName().c_str(), e.what());
+        try
+        {
+            for (unsigned int i = 0; i < can_interfaces_.size(); i++)
+            {
+                can_interfaces_[i]->end_motor_control_mode();
+            }
+            can_interfaces_.clear();
+        }
+        catch (const std::exception &e_inner)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Device error during emergency deactivation, be carefull with still active motors: %s", e_inner.what());
+        }
+        can_communication_mutex_.unlock();
         response->success = false;
         response->message = "Error in CAN communication, see log";
+        cleanup();
         return;
     }
+
+    // Resume the comm thread for the target interface.
+    start_comm_thread(iface);
     response->success = true;
-    response->message = "Motor " + std::to_string(request->motor_id) + " (" + target->name + ") set to origin";
+    response->message = "Motor " + std::to_string(request->motor_id) + " (" + joint_parameters_per_can_interface_[iface][target_joint_idx].name + ") set to origin";
+    can_communication_mutex_.unlock();
 }
 
 bool CubeMarsHardwareNode::parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const

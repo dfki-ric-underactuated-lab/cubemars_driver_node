@@ -366,7 +366,7 @@ void MabFdCan::enable_motor(const canid_t &can_id)
 {
     // (1) Zero out the PID gains before (re-)configuring the motion mode/state below, so the motor
     // doesn't briefly chase a stale impedance target left over from before this write.
-    WriteSingleRegister_Message<float> zero_kp_m;
+    /*WriteSingleRegister_Message<float> zero_kp_m;
     zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
     zero_kp_m.register_value = 0.f;
     send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
@@ -374,7 +374,7 @@ void MabFdCan::enable_motor(const canid_t &can_id)
     WriteSingleRegister_Message<float> zero_kd_m;
     zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
     zero_kd_m.register_value = 0.f;
-    send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));
+    send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));*/
 
     // (2) Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
     // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
