@@ -101,6 +101,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
 {
     RCLCPP_INFO(this->get_logger(), "Configuring Cubemars Motors ... ");
 
+    msg_received_ = false;
+
     /**Declare and read parameters */
     this->declare_parameter_if_undeclared("joints", rclcpp::PARAMETER_STRING_ARRAY);
     this->declare_parameter_if_undeclared("default_damping_KD", rclcpp::PARAMETER_DOUBLE);
