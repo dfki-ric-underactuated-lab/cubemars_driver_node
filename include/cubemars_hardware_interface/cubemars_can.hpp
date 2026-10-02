@@ -19,60 +19,43 @@
 #include <linux/can/raw.h>
 
 #include "cubemars_com.hpp"
+#include "can_comm_base.hpp"
 
 namespace cubemars
 {
-    class can_interface_error : public std::runtime_error
-    {
-    public:
-        explicit can_interface_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit can_interface_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
-    class can_device_error : public std::runtime_error
-    {
-    public:
-        explicit can_device_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit can_device_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
-    class motor_error : public std::runtime_error
-    {
-    public:
-        explicit motor_error(const std::string &__arg) : std::runtime_error(__arg) {};
-        explicit motor_error(const char *__arg) : std::runtime_error(__arg) {};
-    };
-
-    class CubemarsCan
+    // CAN exception types (can_interface_error / can_device_error / motor_error) are declared in
+    // can_comm_base.hpp so every backend shares them.
+    class CubemarsCan : public CanCommBase
     {
     public:
         CubemarsCan(const std::string &can_interface, const int &enable_loopback, const std::vector<joint_config_t> &joint_configs, const long &socket_timeout_sec, const long &socket_timeout_usec, unsigned int max_init_connect_trials, bool enable_tx_timestamping = true, bool enable_can_error_frames = false);
-        void start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable);
-        void end_motor_control_mode(unsigned int joint_id);
-        void start_motor_control_mode(bool set_zero_postion_on_enable);
-        void end_motor_control_mode();
+        void start_motor_control_mode(unsigned int joint_id, bool set_zero_postion_on_enable) override;
+        void end_motor_control_mode(unsigned int joint_id) override;
+        void start_motor_control_mode(bool set_zero_postion_on_enable) override;
+        void end_motor_control_mode() override;
+        void set_zero_position(unsigned int joint_id) override;
 
-        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states);
+        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 
-        const std::string &GetName()
+        const std::string &GetName() override
         {
             return can_interface_;
         }
 
-        canid_t get_can_id(unsigned int joint_index)
+        canid_t get_can_id(unsigned int joint_index) override
         {
             return joint_configs_.at(joint_index).can_id;
         }
 
         // Diagnostics from the last send_and_receive() (CLOCK_REALTIME ns):
-        int64_t get_tx_fill_duration_ns() const { return tx_fill_duration_ns_; } // time to write all command frames to the TX buffer
-        int64_t get_rx_duration_ns() const { return rx_duration_ns_; }           // time to receive all replies after the TX buffer was filled
-        int64_t get_tx_fill_end_ns() const { return tx_fill_end_ns_; }           // timestamp the TX buffer finished being filled (reference for per-motor reply timing)
-        unsigned int get_last_tx_errq_count() const { return last_tx_errq_count_; } // error-queue entries drained in the last collect_tx_timestamps()
-        unsigned int get_last_error_count() const { return last_error_count_; }      // CAN bus-error frames seen in the last send_and_receive()
-        canid_t get_last_error_canid() const { return last_error_canid_; }           // can_id (error class bits) of the most recent error frame
+        int64_t get_tx_fill_duration_ns() const override { return tx_fill_duration_ns_; } // time to write all command frames to the TX buffer
+        int64_t get_rx_duration_ns() const override { return rx_duration_ns_; }           // time to receive all replies after the TX buffer was filled
+        int64_t get_tx_fill_end_ns() const override { return tx_fill_end_ns_; }           // timestamp the TX buffer finished being filled (reference for per-motor reply timing)
+        unsigned int get_last_tx_errq_count() const override { return last_tx_errq_count_; } // error-queue entries drained in the last collect_tx_timestamps()
+        unsigned int get_last_error_count() const override { return last_error_count_; }      // CAN bus-error frames seen in the last send_and_receive()
+        canid_t get_last_error_canid() const override { return last_error_canid_; }           // can_id (error class bits) of the most recent error frame
 
-        virtual ~CubemarsCan();
+        ~CubemarsCan() override;
 
     private:
         std::string can_interface_;
