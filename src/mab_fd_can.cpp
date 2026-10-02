@@ -588,7 +588,7 @@ void MabFdCan::end_motor_control_mode()
 
 void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active)
 {
-    if (cmds.size() != states.size() && cmds.size() != joint_configs_.size())
+    if (cmds.size() != states.size() || cmds.size() != joint_configs_.size())
     {
         throw std::out_of_range("cmds, states have to have the correct size of " + std::to_string(joint_configs_.size()));
     }
