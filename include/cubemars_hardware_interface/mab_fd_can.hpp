@@ -75,38 +75,6 @@ namespace cubemars
         int16_t register_value = 0x0000;
     };
 
-    struct Reset_Message
-    {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
-        uint8_t padding = 0x00;
-        int16_t register_id = REGISTER_ID_RUN_RESET;
-        int8_t register_value = 0x01;
-    };
-
-    struct CanReinit_Message
-    {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
-        uint8_t padding = 0x00;
-        int16_t register_id = REGISTER_ID_RUN_CAN_RE_INIT;
-        int8_t register_value = 0x01;
-    };
-
-    struct ClearWarnings_Message
-    {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
-        uint8_t padding = 0x00;
-        int16_t register_id = REGISTER_ID_RUN_CLEAR_WARNINGS;
-        int8_t register_value = 0x01;
-    };
-
-    struct ClearErrors_Message
-    {
-        uint8_t frame_id = WRITE_REGISTER_LEGACY;
-        uint8_t padding = 0x00;
-        int16_t register_id = REGISTER_ID_RUN_CLEAR_ERRORS;
-        int8_t register_value = 0x01;
-    };
-
     struct MotorMode_Message
     {
         uint8_t frame_id = WRITE_REGISTER;
@@ -183,11 +151,8 @@ namespace cubemars
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
 
-        // Settle-timer replacement for a blind post-power-cycle sleep: cycles a QuickStatus read to
-        // every motor at 10 Hz for the full wait_duration (always runs the complete duration, not
-        // just until the first fault), then throws can_device_error if any motor ever reported a
-        // fault or failed to reply during that window - i.e. confirms every motor was healthy for
-        // the *entire* wait, not just at a single point in time.
+        /** Implements a busy-wait loop that polls the QuickStatus register of all motors until they report a fault, or until the timeout expires. 
+        Throws can_device_error if any motor reports a fault. */
         void wait_for_healthy_quick_status(std::chrono::time_point<std::chrono::steady_clock> start_time, std::chrono::milliseconds wait_duration = std::chrono::milliseconds(3000));
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;

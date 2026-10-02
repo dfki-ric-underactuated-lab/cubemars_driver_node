@@ -7,7 +7,6 @@
 #include <cstring>
 #include <ctime>
 #include <format>
-#include <set>
 #include <stdexcept>
 #include <thread>
 
@@ -308,9 +307,6 @@ void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point<std::chrono
 {
     constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
     const auto deadline = start_time + wait_duration;
-    bool all_healthy = true;
-    std::set<canid_t> unhealthy_can_ids;
-    std::string last_issue;
 
     do
     {
@@ -348,69 +344,11 @@ void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point<std::chrono
         }
         std::this_thread::sleep_for(poll_period);
     }while (std::chrono::steady_clock::now() < deadline);
-
-    if (!all_healthy)
-    {
-        std::string ids;
-        for (canid_t id : unhealthy_can_ids)
-        {
-            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
-        }
-        throw can_device_error(std::format(
-            "Motor(s) with can_id {} were not healthy at some point during the {} ms pre-configure QuickStatus check. Last issue: {}",
-            ids, wait_duration.count(), last_issue));
-    }
 }
 
 void MabFdCan::enable_motor(const canid_t &can_id)
 {
-    // (1) Zero out the PID gains before (re-)configuring the motion mode/state below, so the motor
-    // doesn't briefly chase a stale impedance target left over from before this write.
-    /*WriteSingleRegister_Message<float> zero_kp_m;
-    zero_kp_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KP;
-    zero_kp_m.register_value = 0.f;
-    send_register_command(can_id, &zero_kp_m, sizeof(zero_kp_m));
-
-    WriteSingleRegister_Message<float> zero_kd_m;
-    zero_kd_m.register_id = REGISTER_ID_MOTOR_IMP_PID_KD;
-    zero_kd_m.register_value = 0.f;
-    send_register_command(can_id, &zero_kd_m, sizeof(zero_kd_m));*/
-
-    // (2) Refuse to (re-)activate a motor that is already reporting a fault: read back Quick Status
-    // and bail out before the mode/state writes below if any error-category bit (0-6) is set.
-    /*QuickStatus_Message qs_req;
-    send_frame_.can_id = can_id;
-    send_frame_.len = sizeof(QuickStatus_Message);
-    std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
-    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
-    {
-        RCLCPP_ERROR(rclcpp::get_logger("cubemars_hardware_node"), "Failed to write quick status for motor with can_id : %s", std::to_string(can_id).c_str());
-        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
-    int qs_nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-    if (qs_nbytes <= 0)
-    {
-        RCLCPP_ERROR(rclcpp::get_logger("cubemars_hardware_node"), "Failed to read quick status for motor with can_id : %s", std::to_string(can_id).c_str());
-        throw can_device_error(std::format("Did not receive reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
-    }
-    if (recv_frame_.can_id != can_id)
-    {
-        throw can_device_error(std::format("Reply from can_id {} instead of expected {}", recv_frame_.can_id, can_id));
-    }
-    QuickStatus_Message qs_reply;
-    std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
-    const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
-    RCLCPP_DEBUG(rclcpp::get_logger("cubemars_hardware_node"), "QuickStatus read from can_id %u: 0x%04X",
-                 static_cast<unsigned int>(can_id), quick_status);
-    const ErrorCode qs_fault = mab_quick_status_to_error(quick_status);
-    if (qs_fault != ErrorCode::NO_FAULT)
-    {
-        throw can_device_error(std::format("Motor with can_id {} reports {} before activation (Quick Status 0x{:04X})",
-                                            can_id, errorFlagToString(qs_fault), quick_status));
-    }*/
-
-    // (3) Send motion mode: Impedance
+    // (1) Send motion mode: Impedance
     // MotionMode_Message/MotorState_Message use frame_id WRITE_REGISTER, so the reply mirrors the
     // request's struct layout (a register echo, not a Legacy_Response) - confirm the write
     // actually stuck rather than just confirming *a* reply arrived.
@@ -444,7 +382,7 @@ void MabFdCan::enable_motor(const canid_t &can_id)
         throw can_device_error(std::format("Motor mode register readback mismatch for can_id {}: expected {}, got {}", can_id, mm.register_value, mm_reply.register_value));
     }
 
-    // (4) Send motor state: Enable
+    // (2) Send motor state: Enable
     MotorState_Message ms;
     ms.register_value = MOTOR_STATE_ENABLE;
     send_frame_.can_id = can_id;
@@ -567,9 +505,7 @@ void MabFdCan::set_zero_position(unsigned int joint_id)
         }
 
         // Persist the new zero position (and any other pending register changes) to flash, so it
-        // survives a power cycle. Mirrors save_motors.py's runSaveCmd write: send_register_command
-        // already checks that a reply arrived and that it came from the expected can_id, throwing
-        // can_device_error otherwise, so a lost/misdirected ack surfaces as a real failure here.
+        // survives a power cycle
         tv.tv_sec = 5;
         tv.tv_usec = 0;
         if (setsockopt(can_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(struct timeval)) < 0)
