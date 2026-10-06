@@ -372,7 +372,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
         // from the can_backends.<interface> parameter (default comm_backend_default), so one node can
         // drive CubeMars (classic CAN) and MAB (CAN FD) buses side by side.
 
-        auto start_time = std::chrono::steady_clock::now();
+        std::vector<std::shared_ptr<cubemars::MabFdCan>> mab_interfaces;
         for (auto can_interface_name : can_interfaces_names_)
         {
             auto can_interface_id = std::distance(can_interfaces_names_.begin(), can_interfaces_names_.find(can_interface_name));
@@ -409,12 +409,8 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     this->get_parameter("can_initial_connection_trials").as_int(),
                     enable_tx_timestamping_,
                     enable_can_error_frames_);
-                // Instead of a blind post-power-cycle sleep: actively poll every motor's QuickStatus
-                // at 10 Hz for up to 3s and require every reading to be fault-free before proceeding.
-                RCLCPP_INFO(this->get_logger(), "CAN interface '%s': waiting for QuickStatus on all motors for 3s ... ",
-                            can_interface_name.c_str());
-                mab_can->wait_for_healthy_quick_status(start_time);
                 can_interfaces_[can_interface_id] = mab_can;
+                mab_interfaces.push_back(mab_can);
             }
             else
             {
@@ -422,6 +418,37 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
                     "Unknown comm_backend '" + backend + "' for interface '" + can_interface_name +
                     "'. Valid values: 'cubemars', 'mab'.");
             }
+        }
+
+        // Instead of a blind post-power-cycle sleep: actively poll every MAB motor's QuickStatus at 10 Hz
+        // for 3s (all interfaces in parallel) and require every reading to be fault-free before proceeding.
+        std::vector<std::future<void>> quick_status_futures;
+        for (auto &mab_can : mab_interfaces)
+        {
+            RCLCPP_INFO(this->get_logger(), "CAN interface '%s': waiting for QuickStatus on all motors for 3s ... ",
+                        mab_can->GetName().c_str());
+            quick_status_futures.push_back(mab_can->await_quick_status_async(std::chrono::milliseconds(3000)));
+        }
+
+        bool quick_status_failure = false;
+        std::string quick_status_error_string = "";
+        for (auto &quick_status_future : quick_status_futures)
+        {
+            try
+            {
+                quick_status_future.get();
+            }
+            catch (const std::exception &e)
+            {
+                quick_status_error_string += std::string("\t") + e.what() + std::string("\n");
+                quick_status_failure = true;
+            }
+        }
+        if (quick_status_failure)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Device error while waiting for QuickStatus: \n %s", quick_status_error_string.c_str());
+            can_interfaces_.clear();
+            return LifecycleNodeInterface::CallbackReturn::ERROR;
         }
 
         // Services for calibration and zeroing 
@@ -510,8 +537,7 @@ LifecycleNodeInterface::CallbackReturn CubeMarsHardwareNode::on_configure([[mayb
     }
     catch (cubemars::can_device_error &exception)
     {
-        // Thrown by wait_for_healthy_quick_status() if a motor reports a fault (or doesn't reply)
-        // before any motor has been activated yet, so just deactivating the interfaces is enough.
+        // Thrown before any motor has been activated yet, so just deactivating the interfaces is enough.
         RCLCPP_ERROR(this->get_logger(), "%s", exception.what());
         can_interfaces_.clear();
         return LifecycleNodeInterface::CallbackReturn::ERROR;

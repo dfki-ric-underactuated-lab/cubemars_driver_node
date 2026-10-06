@@ -6,6 +6,7 @@
 #include <vector>
 #include <stdfloat>
 #include <chrono>
+#include <future>
 
 #include <linux/can.h>
 
@@ -151,9 +152,10 @@ namespace cubemars
         void end_motor_control_mode() override;
         void set_zero_position(unsigned int joint_id) override;
 
-        /** Implements a busy-wait loop that polls the QuickStatus register of all motors until they report a fault, or until the timeout expires. 
-        Throws can_device_error if any motor reports a fault. */
-        void wait_for_healthy_quick_status(std::chrono::time_point<std::chrono::steady_clock> start_time, std::chrono::milliseconds wait_duration = std::chrono::milliseconds(3000));
+        /** Polls the QuickStatus of all motors at 10 Hz for min_time on a separate thread. Each round polls every
+        motor; if any motor fails (no reply or fault) the round's failures are collected and a can_device_error is
+        thrown (surfaced via future.get()). The object must outlive the returned future. */
+        std::future<void> await_quick_status_async(std::chrono::milliseconds min_time);
 
         void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
 
@@ -173,6 +175,8 @@ namespace cubemars
         // Enable/disable a motor by writing the mode + state registers (with a read-back acknowledgement),
         // and zero a motor by writing the RunZero register.
         void enable_motor(const canid_t &can_id);
+        // One QuickStatus request/reply; throws can_device_error on no reply or a reported fault.
+        void check_quick_status(const canid_t &can_id);
         // Write a single MAB register-protocol message and confirm the motor's acknowledgement
         // (matching can_id reply); throws can_device_error if none arrives.
         void send_register_command(const canid_t &can_id, const void *msg, uint8_t msg_len);

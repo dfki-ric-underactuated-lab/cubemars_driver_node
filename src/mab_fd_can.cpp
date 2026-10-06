@@ -303,47 +303,73 @@ void MabFdCan::send_register_command(const canid_t &can_id, const void *msg, uin
                  register_id, static_cast<unsigned int>(can_id), nbytes);
 }
 
-void MabFdCan::wait_for_healthy_quick_status(std::chrono::time_point<std::chrono::steady_clock> start_time, std::chrono::milliseconds wait_duration)
+void MabFdCan::check_quick_status(const canid_t &can_id)
 {
-    constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
-    const auto deadline = start_time + wait_duration;
-
-    do
+    QuickStatus_Message qs_req;
+    send_frame_.can_id = can_id;
+    send_frame_.len = sizeof(QuickStatus_Message);
+    std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
+    if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
     {
-        for (const auto &cfg : joint_configs_)
+        throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(can_id), std::string(strerror(errno))));
+    }
+    // Skip late replies from other motors (e.g. one that timed out just before).
+    while (true)
+    {
+        memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
+        int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
+        if (nbytes <= 0)
         {
-            QuickStatus_Message qs_req;
-            send_frame_.can_id = cfg.can_id;
-            send_frame_.len = sizeof(QuickStatus_Message);
-            std::memcpy(send_frame_.data, &qs_req, sizeof(QuickStatus_Message));
-            if (::write(can_socket_fd_, &send_frame_, sizeof(send_frame_)) < 0)
-            {
-                throw can_device_error(std::format("Failed to write can frame to can_id {} - {}", std::to_string(cfg.can_id), std::string(strerror(errno))));
-            }
-            memset(&recv_frame_.data, 0, sizeof(QuickStatus_Message));
-            int nbytes = ::read(can_socket_fd_, &recv_frame_, sizeof(recv_frame_));
-            if (nbytes <= 0)
-            {
-                throw can_device_error(std::format("Did not receive QuickStatus reply from can_id {} - {} ", std::to_string(cfg.can_id), std::string(strerror(errno))));
-            }
-            if (recv_frame_.can_id != cfg.can_id)
-            {
-                throw can_device_error(std::format("QuickStatus reply from can_id {} instead of expected {}", recv_frame_.can_id, cfg.can_id));
-            }
-            QuickStatus_Message qs_reply;
-            std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
-            const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
-            RCLCPP_DEBUG(rclcpp::get_logger("cubemars_hardware_node"), "QuickStatus read from can_id %u while waiting for motors to settle: 0x%04X",
-                            static_cast<unsigned int>(cfg.can_id), quick_status);
-            const ErrorCode qs_fault = mab_quick_status_to_error(quick_status);
-            if (qs_fault != ErrorCode::NO_FAULT)
-            {
-                throw can_device_error(std::format("Motor with can_id {} reports {} (Quick Status 0x{:04X})",
-                                                    cfg.can_id, errorFlagToString(qs_fault), quick_status));
-            }
+            throw can_device_error(std::format("Did not receive QuickStatus reply from can_id {} - {} ", std::to_string(can_id), std::string(strerror(errno))));
         }
-        std::this_thread::sleep_for(poll_period);
-    }while (std::chrono::steady_clock::now() < deadline);
+        if (recv_frame_.can_id == can_id)
+        {
+            break;
+        }
+    }
+    QuickStatus_Message qs_reply;
+    std::memcpy(&qs_reply, recv_frame_.data, sizeof(QuickStatus_Message));
+    const uint16_t quick_status = static_cast<uint16_t>(qs_reply.register_value);
+    RCLCPP_DEBUG(rclcpp::get_logger("cubemars_hardware_node"), "QuickStatus read from can_id %u while waiting for motors to settle: 0x%04X",
+                 static_cast<unsigned int>(can_id), quick_status);
+    const ErrorCode qs_fault = mab_quick_status_to_error(quick_status);
+    if (qs_fault != ErrorCode::NO_FAULT)
+    {
+        throw can_device_error(std::format("Motor with can_id {} reports {} (Quick Status 0x{:04X})",
+                                           can_id, errorFlagToString(qs_fault), quick_status));
+    }
+}
+
+std::future<void> MabFdCan::await_quick_status_async(std::chrono::milliseconds min_time)
+{
+    return std::async(std::launch::async, [this, min_time]()
+    {
+        constexpr auto poll_period = std::chrono::milliseconds(100); // 10 Hz
+        const auto deadline = std::chrono::steady_clock::now() + min_time;
+
+        do
+        {
+            unsigned int failed = 0;
+            std::string error_msg = "";
+            for (const auto &cfg : joint_configs_)
+            {
+                try
+                {
+                    check_quick_status(cfg.can_id);
+                }
+                catch (const can_device_error &e)
+                {
+                    error_msg += std::string("\t\t") + e.what() + std::string("\n");
+                    failed++;
+                }
+            }
+            if (failed > 0)
+            {
+                throw can_device_error(std::format("QuickStatus check failed for {} of {} motors on interface {}:\n{}", failed, joint_configs_.size(), can_interface_, error_msg));
+            }
+            std::this_thread::sleep_for(poll_period);
+        } while (std::chrono::steady_clock::now() < deadline);
+    });
 }
 
 void MabFdCan::enable_motor(const canid_t &can_id)
