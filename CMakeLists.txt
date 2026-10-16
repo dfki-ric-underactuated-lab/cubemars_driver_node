@@ -67,8 +67,9 @@ install(
 
 
 # add node
-add_executable(cubemars_hardware_node 
+add_executable(cubemars_hardware_node
   src/cubemars_can.cpp
+  src/mab_fd_can.cpp
   src/cubemars_hardware_node.cpp
 )
 

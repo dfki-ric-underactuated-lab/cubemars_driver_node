@@ -8,6 +8,8 @@
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "cubemars_hardware_interface/cubemars_can.hpp"
+#include "cubemars_hardware_interface/can_comm_base.hpp"
+#include "cubemars_hardware_interface/mab_fd_can.hpp"
 #include "cubemars_hardware_interface/custom_qos.hpp"
 #include <atomic>
 #include <mutex>
@@ -120,6 +122,10 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr can_intercycle_gap_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_velocity_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr unfiltered_position_pub_;
+    // Debug-only: raw output-side encoder position/velocity, NaN for joints/drivers without one
+    // (see joint_state_t::output_encoder_pos / output_encoder_vel).
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr output_encoder_position_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr output_encoder_velocity_pub_;
     rclcpp::Publisher<robot_control_msgs::msg::JointState>::SharedPtr joint_state_pub_;
     // Round-trip controller latency: now - stamp of the incoming joint_cmd, in milliseconds.
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr controller_latency_pub_;
@@ -134,7 +140,7 @@ private:
     bool enable_tx_timestamping_; // software TX timestamps + the cmd_to_bus / motor_reply latency topics
     bool enable_can_error_frames_; // deliver + log CAN bus-error frames (bus-off, ACK errors, ...)
 
-    bool msg_received_;
+    std::atomic<bool> msg_received_{false};
 
 
     // Latest joint command, published lock-free by the subscriber and read by the comm threads.
@@ -157,6 +163,8 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_;
+    std_msgs::msg::Float32MultiArray output_encoder_velocity_msg_;
     robot_control_msgs::msg::JointState joint_state_msg_to_pub_;
     std_msgs::msg::Float32MultiArray joint_temp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray can_interface_frequency_msg_to_pub_;
@@ -172,6 +180,8 @@ private:
     std_msgs::msg::Float32MultiArray joint_rx_hw_timestamp_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_velocity_msg_to_pub_;
     std_msgs::msg::Float32MultiArray unfiltered_position_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray output_encoder_position_msg_to_pub_;
+    std_msgs::msg::Float32MultiArray output_encoder_velocity_msg_to_pub_;
     std::shared_mutex joint_state_msg_mutex_;
     std::shared_mutex can_communication_mutex_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr ros2_joint_state_pub_;
@@ -191,7 +201,10 @@ private:
     std::vector<std::vector<cubemars::joint_state_t>> joint_states_per_can_interface_;
     std::vector<std::vector<JointParameters>> joint_parameters_per_can_interface_;
     std::vector<unsigned int> num_can_errors_per_interfaces_;
-    std::vector<std::shared_ptr<cubemars::CubemarsCan>> can_interfaces_;
+    // Stored as the abstract backend type so the node can drive either electronics (CubeMars classic
+    // CAN or MAB FDCAN) through one pointer; the concrete type is chosen where the
+    // objects are constructed in on_configure.
+    std::vector<std::shared_ptr<cubemars::CanCommBase>> can_interfaces_;
     std::vector<rclcpp::Time> last_can_cycle_times_;
     std::vector<int64_t> last_cycle_end_ns_per_can_interface_; // CLOCK_MONOTONIC end of the previous can_cycle_callback, for the inter-cycle gap
 
@@ -236,16 +249,6 @@ private:
     rcl_interfaces::msg::SetParametersResult on_set_parameters_callback(const std::vector<rclcpp::Parameter> &params);
     bool parse_per_joint_param(const std::string &name, std::string &joint_name_out, std::string &field_out) const;
 
-    template <typename T>
-    T declare_and_get_parameter(const std::string &name)
-    {
-        if (!this->has_parameter(name)) // To prevent exceptions due to double declaration
-        {
-            this->declare_parameter<T>(name);
-        }
-        this->get_parameter(name).get_value<T>();
-    }
-
     void declare_parameter_if_undeclared(const std::string &name, const rclcpp::ParameterType & type){
         if(!this->has_parameter(name)){
             this->declare_parameter(name, type);
@@ -268,6 +271,11 @@ public:
     LifecycleNodeInterface::CallbackReturn on_cleanup(const rclcpp_lifecycle::State &previous_state) override;
     LifecycleNodeInterface::CallbackReturn on_error(const rclcpp_lifecycle::State &previous_state) override;
     LifecycleNodeInterface::CallbackReturn on_shutdown(const rclcpp_lifecycle::State &previous_state) override;
+
+    // Bounce the given CAN interface (down, reconfigure bitrate/dbitrate/fd/txqueuelen, up) so
+    // every on_configure() starts from a known-good link state instead of whatever a previous
+    // run (or a wedged controller) left it in. Throws can_interface_error on failure.
+    void reset_can_interface(const std::string &interface_name);
 
     void watchdog_timer_callback();
     void joint_cmd_msg_callback(const robot_control_msgs::msg::JointCommand::ConstSharedPtr &joint_cmd_msg);

@@ -6,6 +6,13 @@ cubemars_hardware_node:
     frequency: 1000
     can_socket_timeout_usec: 10000
 
+    # Communication backend per CAN interface: "cubemars" (classic CAN) or "mab" (CAN FD register
+    # protocol). comm_backend_default covers any interface not listed under can_backends.
+    comm_backend_default: cubemars
+    can_backends:
+      can0: cubemars
+      can1: cubemars
+
     joint_defintions:
       joint_ll_hip_1:
         msg_idx: 0

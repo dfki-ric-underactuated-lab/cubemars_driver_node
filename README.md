@@ -1,3 +1,17 @@
+# CubeMars hardware interface (ROS 2)
+
+A Robot Operating System 2 (ROS 2) driver for CubeMars (T-Motor) quasi-direct-drive actuators on a
+Controller Area Network (CAN) bus. It drives CubeMars motors with either controller family:
+
+- **CubeMars** electronics, over classic CAN.
+- **MAB** controllers, over CAN with Flexible Data-rate (CAN FD), using the MAB register protocol.
+
+The communication backend is selected per CAN interface (see "Communication backend per CAN interface"
+below). For the MAB protocol, see the MAB MD80 / CANdle documentation:
+<https://mabrobotics.github.io/MD80-x-CANdle-Documentation/> - in particular the
+[FDCAN protocol](https://mabrobotics.github.io/MD80-x-CANdle-Documentation/MD/Communication/fdcan.html)
+and [Quick Status](https://mabrobotics.github.io/MD80-x-CANdle-Documentation/MD/status_utility.html) pages.
+
 # Enable CAN interface
 
 
@@ -23,6 +37,35 @@ Name=can*
 BitRate=1000K
 RestartSec=1000ms
 ```
+
+# Enable CAN FD interface (MAB electronics)
+
+MAB electronics communicate over CAN FD (flexible data-rate). Bring those interfaces up in FD mode with
+both an arbitration and a data bitrate (the MAB default data bitrate is 8 Mbit/s):
+
+``` bash
+  ip link set can1 up type can bitrate 1000000 dbitrate 8000000 fd on
+  ip link set can1 txqueuelen 1000
+```
+
+# Communication backend per CAN interface (CubeMars or MAB)
+
+A single node drives both CubeMars (classic CAN) and MAB (CAN FD) electronics; the communication backend
+is selected **per CAN interface** in the parameter file:
+
+``` yaml
+cubemars_hardware_node:
+  ros__parameters:
+    comm_backend_default: cubemars        # cubemars | mab
+    can_backends:
+      can0: cubemars
+      can1: mab
+```
+
+Interfaces not listed under `can_backends` use `comm_backend_default`. Each joint names its
+`can_interface`, `can_id` and `motor_type` as usual; use `motor_type: "MAB"` for MAB motors. Classic CAN
+and CAN FD must not share one physical bus, so the backend is a property of the interface, not of an
+individual motor.
 
 # Use CubeMars (TMotors) Ros 2 Lifecycle Node
 An example config can be found in [config/test_params.yaml]().
