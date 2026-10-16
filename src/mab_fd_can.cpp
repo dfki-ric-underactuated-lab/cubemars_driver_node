@@ -642,6 +642,7 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         const float kp = fminf(fmaxf(static_cast<float>(cfg.KP_MIN), cmds[i].kp), static_cast<float>(cfg.KP_MAX));
         const float kd = fminf(fmaxf(static_cast<float>(cfg.KD_MIN), cmds[i].kd), static_cast<float>(cfg.KD_MAX));
         
+        MotionCommand_Message cmd;
         cmd.desired_pk = kp;
         cmd.desired_dk = kd;
         cmd.desired_position = pos;
