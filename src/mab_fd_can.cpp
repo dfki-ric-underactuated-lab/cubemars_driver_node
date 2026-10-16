@@ -612,7 +612,7 @@ void MabFdCan::end_motor_control_mode()
     }
 }
 
-void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active)
+void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states)
 {
     if (cmds.size() != states.size() || cmds.size() != joint_configs_.size())
     {
@@ -642,17 +642,12 @@ void MabFdCan::send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vecto
         const float kp = fminf(fmaxf(static_cast<float>(cfg.KP_MIN), cmds[i].kp), static_cast<float>(cfg.KP_MAX));
         const float kd = fminf(fmaxf(static_cast<float>(cfg.KD_MIN), cmds[i].kd), static_cast<float>(cfg.KD_MAX));
         
-        // Default-constructed desired_* fields are already 0.f, so when inactive we simply leave
-        // them unset and write zero register values instead of the actual command.
-        MotionCommand_Message cmd;
-        if (is_active)
-        {
-            cmd.desired_pk = kp;
-            cmd.desired_dk = kd;
-            cmd.desired_position = pos;
-            cmd.desired_velocity = vel;
-            cmd.desired_torque = torque;
-        }
+        cmd.desired_pk = kp;
+        cmd.desired_dk = kd;
+        cmd.desired_position = pos;
+        cmd.desired_velocity = vel;
+        cmd.desired_torque = torque;
+    
         send_frame_.can_id = joint_configs_[i].can_id;
         send_frame_.len = sizeof(MotionCommand_Message);
         send_frame_.flags = CANFD_BRS;

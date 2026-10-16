@@ -157,7 +157,7 @@ namespace cubemars
         thrown (surfaced via future.get()). The object must outlive the returned future. */
         std::future<void> await_quick_status_async(std::chrono::milliseconds min_time);
 
-        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states, bool is_active) override;
+        void send_and_receive(const std::vector<joint_cmd_t> &cmds, std::vector<joint_state_t> &states) override;
 
         const std::string &GetName() override { return can_interface_; }
         canid_t get_can_id(unsigned int joint_index) override { return joint_configs_.at(joint_index).can_id; }

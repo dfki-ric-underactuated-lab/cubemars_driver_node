@@ -1090,7 +1090,7 @@ void CubeMarsHardwareNode::can_cycle_callback(unsigned int can_interface_idx)
     can_communication_mutex_.lock_shared();
     try
     {
-        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states, is_active);
+        can_interfaces_[can_interface_idx]->send_and_receive(joint_cmds, joint_states);
         can_communication_mutex_.unlock_shared();
     }
     catch (const std::exception &e)
